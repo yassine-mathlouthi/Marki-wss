@@ -9,7 +9,6 @@ from app.models.room import (
     JoinRoomRequest,
     JoinRoomResponse,
     LeaveRoomRequest,
-    Room,
 )
 from app.services.connection_manager import ConnectionManager
 from app.services.room_service import RoomService
@@ -26,6 +25,7 @@ def get_rooms_router(
         room, host_player = room_service.create_room(
             host_name=payload.host_name,
             max_players=payload.max_players,
+            settings=payload.settings,
         )
         return CreateRoomResponse(
             roomCode=room.room_code,
@@ -39,35 +39,53 @@ def get_rooms_router(
             room_code=payload.room_code,
             player_name=payload.player_name,
         )
-        event = GameEvent(
-            type="player_joined",
-            roomCode=room.room_code,
-            playerId=player.player_id,
-            payload={"player": player.model_dump(mode="json", by_alias=True), "room": room.model_dump(mode="json", by_alias=True)},
-        )
-        await connection_manager.broadcast(room.room_code, event)
+        await _broadcast_snapshot(connection_manager, room_service, room, event_type="player_joined", actor_player_id=player.player_id)
         return JoinRoomResponse(
             roomCode=room.room_code,
             playerId=player.player_id,
             room=room,
         )
 
-    @router.get("/{room_code}", response_model=Room)
-    async def get_room(room_code: str) -> Room:
-        return room_service.get_room(room_code)
+    @router.get("/{room_code}")
+    async def get_room(room_code: str) -> dict:
+        room = room_service.get_room(room_code)
+        return room_service.build_snapshot(room, viewer_player_id=None).model_dump(mode="json", by_alias=True)
 
-    @router.post("/{room_code}/leave", response_model=Room | None)
-    async def leave_room(room_code: str, payload: LeaveRoomRequest) -> Room | None:
+    @router.post("/{room_code}/leave")
+    async def leave_room(room_code: str, payload: LeaveRoomRequest) -> dict | None:
         existing_room = room_service.get_room(room_code)
         room = room_service.leave_room(room_code, payload.player_id)
-        event = GameEvent(
-            type="player_left",
-            roomCode=existing_room.room_code,
-            playerId=payload.player_id,
-            payload={"room": room.model_dump(mode="json", by_alias=True) if room else None},
-        )
-        await connection_manager.broadcast(existing_room.room_code, event)
         connection_manager.disconnect(existing_room.room_code, payload.player_id)
-        return room
+        if room is not None:
+            await _broadcast_snapshot(
+                connection_manager,
+                room_service,
+                room,
+                event_type="player_left",
+                actor_player_id=payload.player_id,
+            )
+            return room_service.build_snapshot(room, viewer_player_id=None).model_dump(mode="json", by_alias=True)
+        return None
 
     return router
+
+
+async def _broadcast_snapshot(
+    connection_manager: ConnectionManager,
+    room_service: RoomService,
+    room,
+    *,
+    event_type: str,
+    actor_player_id: str,
+) -> None:
+    for player in room.players:
+        await connection_manager.send_to_player(
+            room.room_code,
+            player.player_id,
+            GameEvent(
+                type=event_type,
+                roomCode=room.room_code,
+                playerId=actor_player_id,
+                payload={"snapshot": room_service.build_snapshot(room, player.player_id).model_dump(mode="json", by_alias=True)},
+            ),
+        )

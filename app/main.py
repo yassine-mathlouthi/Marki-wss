@@ -9,13 +9,17 @@ from app.routers.rooms import get_rooms_router
 from app.routers.websocket import get_websocket_router
 from app.services.connection_manager import ConnectionManager
 from app.services.game_service import GameService
-from app.services.room_service import room_service
+from app.services.in_memory import InMemoryRoomEventBus, InMemoryRoomStore
+from app.services.room_service import RoomService
 
 load_dotenv()
 
 settings = get_settings()
 connection_manager = ConnectionManager()
-game_service = GameService()
+room_store = InMemoryRoomStore()
+room_event_bus = InMemoryRoomEventBus(connection_manager)
+room_service = RoomService(room_store)
+game_service = GameService(settings)
 
 app = FastAPI(title=settings.app_name)
 

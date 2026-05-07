@@ -6,6 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.game import GameState, LobbySettings
 from app.models.player import Player
 
 
@@ -28,6 +29,8 @@ class Room(BaseModel):
         alias="currentTurnPlayerId",
     )
     scores: dict[str, int] = Field(default_factory=dict)
+    settings: LobbySettings = Field(default_factory=LobbySettings)
+    game: GameState | None = None
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         alias="createdAt",
@@ -43,6 +46,7 @@ class CreateRoomRequest(BaseModel):
 
     host_name: str = Field(min_length=1, max_length=32, alias="hostName")
     max_players: int = Field(ge=2, le=8, alias="maxPlayers")
+    settings: LobbySettings = Field(default_factory=LobbySettings)
 
 
 class JoinRoomRequest(BaseModel):
