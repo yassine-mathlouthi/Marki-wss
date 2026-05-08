@@ -20,8 +20,11 @@ class GameService:
 
     async def load_cards(self, region_id: str) -> list[GameCard]:
         if self._settings.cards_api_base_url:
-            remote_cards = await self._load_remote_cards(region_id)
-            if remote_cards:
+            try:
+                remote_cards = await self._load_remote_cards(region_id)
+            except httpx.HTTPError:
+                remote_cards = []
+            if len(remote_cards) >= 2:
                 return remote_cards
         return [card.model_copy(deep=True) for card in self._fallback_cards if card.region_id == region_id]
 
@@ -191,8 +194,8 @@ class GameService:
     def _load_fallback_cards(self) -> list[GameCard]:
         root = Path(__file__).resolve().parents[3]
         candidate_files = [
-            root / "frontEnd" / "assets" / "data" / "cards" / "tunisia_clubs.json",
-            root / "frontEnd" / "assets" / "data" / "cards" / "common_numbers.json",
+            root / "frontend" / "assets" / "data" / "cards" / "tunisia_clubs.json",
+            root / "frontend" / "assets" / "data" / "cards" / "common_numbers.json",
         ]
         cards: list[GameCard] = []
         for path in candidate_files:
