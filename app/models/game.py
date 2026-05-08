@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class WrongAnswerBehavior(str, Enum):
@@ -20,7 +20,7 @@ class VoteChoice(str, Enum):
 class GameCard(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    id: str
+    id: str = Field(validation_alias=AliasChoices("id", "_id"))
     type: str
     region_id: str = Field(alias="regionId")
     pack_id: str = Field(alias="packId")
