@@ -77,8 +77,18 @@ def get_websocket_router(
                         connection_manager=connection_manager,
                         game_service=game_service,
                     )
-                except ValidationError:
-                    await _send_error(websocket, room.room_code, player_id, "Payload validation failed.")
+                except ValidationError as exc:
+                    details = []
+                    for error in exc.errors():
+                        location = ".".join(str(part) for part in error.get("loc", ()))
+                        message = error.get("msg", "Invalid value.")
+                        details.append(f"{location}: {message}" if location else message)
+                    await _send_error(
+                        websocket,
+                        room.room_code,
+                        player_id,
+                        "Payload validation failed. " + " | ".join(details),
+                    )
                 except HTTPException as exc:
                     await _send_error(websocket, room.room_code, player_id, str(exc.detail))
                 except ValueError as exc:

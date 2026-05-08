@@ -1,0 +1,92 @@
+[
+  {
+    "id": "number_7",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 7", "fr": "Numéro 7", "ar": "الرقم 7"},
+    "icon": "assets/cards/common/7.png",
+    "tags": ["number", "7"]
+  },
+  {
+    "id": "number_8",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 8", "fr": "Numéro 8", "ar": "الرقم 8"},
+    "icon": "assets/cards/common/8.png",
+    "tags": ["number", "8"]
+  },
+  {
+    "id": "number_9",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 9", "fr": "Numéro 9", "ar": "الرقم 9"},
+    "icon": "assets/cards/common/9.png",
+    "tags": ["number", "9"]
+  },
+  {
+    "id": "number_10",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 10", "fr": "Numéro 10", "ar": "الرقم 10"},
+    "icon": "assets/cards/common/10.png",
+    "tags": ["number", "10"]
+  },
+  {
+    "id": "number_11",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 11", "fr": "Numéro 11", "ar": "الرقم 11"},
+    "icon": "assets/cards/common/11.png",
+    "tags": ["number", "11"]
+  },
+  {
+    "id": "number_13",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 13", "fr": "Numéro 13", "ar": "الرقم 13"},
+    "icon": "assets/cards/common/13.png",
+    "tags": ["number", "13"]
+  },
+  {
+    "id": "number_20",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 20", "fr": "Numéro 20", "ar": "الرقم 20"},
+    "icon": "assets/cards/common/20.png",
+    "tags": ["number", "20"]
+  },
+  {
+    "id": "number_24",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 24", "fr": "Numéro 24", "ar": "الرقم 24"},
+    "icon": "assets/cards/common/24.png",
+    "tags": ["number", "24"]
+  },
+  {
+    "id": "number_30",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 30", "fr": "Numéro 30", "ar": "الرقم 30"},
+    "icon": "assets/cards/common/30.png",
+    "tags": ["number", "30"]
+  },
+  {
+    "id": "number_99",
+    "type": "number",
+    "regionId": "tunisia",
+    "packId": "common_numbers",
+    "names": {"en": "Number 99", "fr": "Numéro 99", "ar": "الرقم 99"},
+    "icon": "assets/cards/common/99.png",
+    "tags": ["number", "99"]
+  }
+]

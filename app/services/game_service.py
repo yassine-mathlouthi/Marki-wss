@@ -194,15 +194,19 @@ class GameService:
     def _load_fallback_cards(self) -> list[GameCard]:
         root = Path(__file__).resolve().parents[3]
         candidate_files = [
+            root / "Marki-wss" / "app" / "data" / "cards" / "tunisia_clubs.json",
+            root / "Marki-wss" / "app" / "data" / "cards" / "common_numbers.json",
             root / "frontend" / "assets" / "data" / "cards" / "tunisia_clubs.json",
             root / "frontend" / "assets" / "data" / "cards" / "common_numbers.json",
         ]
         cards: list[GameCard] = []
+        loaded_paths: set[Path] = set()
         for path in candidate_files:
-            if not path.exists():
+            if not path.exists() or path in loaded_paths:
                 continue
             data = json.loads(path.read_text(encoding="utf-8"))
             cards.extend(GameCard.model_validate(item) for item in data)
+            loaded_paths.add(path)
         return cards
 
     @staticmethod

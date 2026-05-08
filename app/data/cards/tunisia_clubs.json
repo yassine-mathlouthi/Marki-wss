@@ -1,0 +1,158 @@
+[
+  {
+    "id": "club_est",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Espérance Sportive de Tunis",
+      "fr": "Espérance de Tunis",
+      "ar": "الترجي الرياضي التونسي"
+    },
+    "icon": "assets/cards/tunisia/est.png",
+    "tags": ["tunisia", "club", "est", "taraji"]
+  },
+  {
+    "id": "club_css",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "CS Sfaxien",
+      "fr": "CS Sfaxien",
+      "ar": "النادي الرياضي الصفاقسي"
+    },
+    "icon": "assets/cards/tunisia/css.png",
+    "tags": ["tunisia", "club", "css", "sfax"]
+  },
+  {
+    "id": "club_ca",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Club Africain",
+      "fr": "Club Africain",
+      "ar": "النادي الإفريقي"
+    },
+    "icon": "assets/cards/tunisia/ca.png",
+    "tags": ["tunisia", "club", "ca", "africain"]
+  },
+  {
+    "id": "club_etoile",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Étoile Sportive du Sahel",
+      "fr": "Étoile du Sahel",
+      "ar": "النجم الرياضي الساحلي"
+    },
+    "icon": "assets/cards/tunisia/ess.png",
+    "tags": ["tunisia", "club", "ess", "sahel"]
+  },
+  {
+    "id": "club_st",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Stade Tunisien",
+      "fr": "Stade Tunisien",
+      "ar": "الملعب التونسي"
+    },
+    "icon": "assets/cards/tunisia/st.png",
+    "tags": ["tunisia", "club", "st", "bardo"]
+  },
+  {
+    "id": "club_usmo",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "US Monastirienne",
+      "fr": "US Monastir",
+      "ar": "الاتحاد الرياضي المنستيري"
+    },
+    "icon": "assets/cards/tunisia/usmo.png",
+    "tags": ["tunisia", "club", "usmo", "monastir"]
+  },
+  {
+    "id": "club_asm",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Avenir Sportif de La Marsa",
+      "fr": "AS Marsa",
+      "ar": "المستقبل الرياضي بالمرسى"
+    },
+    "icon": "assets/cards/tunisia/asm.png",
+    "tags": ["tunisia", "club", "marsa"]
+  },
+  {
+    "id": "club_ob",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Olympique de Béja",
+      "fr": "Olympique de Béja",
+      "ar": "أولمبيك باجة"
+    },
+    "icon": "assets/cards/tunisia/ob.png",
+    "tags": ["tunisia", "club", "beja"]
+  },
+  {
+    "id": "club_metlaoui",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "ES Métlaoui",
+      "fr": "ES Métlaoui",
+      "ar": "نجم المتلوي"
+    },
+    "icon": "assets/cards/tunisia/metlaoui.png",
+    "tags": ["tunisia", "club", "metlaoui"]
+  },
+  {
+    "id": "club_bizerte",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "CA Bizertin",
+      "fr": "CA Bizertin",
+      "ar": "النادي الرياضي البنزرتي"
+    },
+    "icon": "assets/cards/tunisia/cab.png",
+    "tags": ["tunisia", "club", "bizerte"]
+  },
+  {
+    "id": "club_gafsa",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "EGS Gafsa",
+      "fr": "EGS Gafsa",
+      "ar": "القوافل الرياضية بقفصة"
+    },
+    "icon": "assets/cards/tunisia/gafsa.png",
+    "tags": ["tunisia", "club", "gafsa"]
+  },
+  {
+    "id": "club_jendouba",
+    "type": "club",
+    "regionId": "tunisia",
+    "packId": "tunisia_clubs",
+    "names": {
+      "en": "Jendouba Sport",
+      "fr": "Jendouba Sport",
+      "ar": "جندوبة الرياضية"
+    },
+    "icon": "assets/cards/tunisia/jendouba.png",
+    "tags": ["tunisia", "club", "jendouba"]
+  }
+]
