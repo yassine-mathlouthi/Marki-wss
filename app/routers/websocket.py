@@ -160,6 +160,16 @@ async def _handle_event(
         await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
         return
 
+    if event_type == "pass_turn":
+        if room.status != RoomStatus.PLAYING:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+        if room.current_turn_player_id != player_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
+        room = game_service.pass_turn(room, player_id)
+        room = room_service.save(room)
+        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        return
+
     if event_type == "cast_vote":
         if room.status != RoomStatus.PLAYING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")

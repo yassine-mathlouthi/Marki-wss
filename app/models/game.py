@@ -70,6 +70,7 @@ class RoundResult(BaseModel):
     related_card: GameCard = Field(alias="relatedCard")
     answer_text: str = Field(alias="answerText")
     votes: list[Vote] = Field(default_factory=list)
+    drawn_cards: list[GameCard] = Field(default_factory=list, alias="drawnCards")
     accepted: bool
     correct_votes: int = Field(alias="correctVotes")
     wrong_votes: int = Field(alias="wrongVotes")

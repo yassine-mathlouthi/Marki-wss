@@ -8,7 +8,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.core.config import Settings
-from app.models.game import GameCard, PendingRound, RoundResult, Vote, VoteChoice, WrongAnswerBehavior
+from app.models.game import GameCard, PendingRound, RoundResult, Vote, VoteChoice
 from app.models.room import Room, RoomStatus
 
 
@@ -105,6 +105,7 @@ class GameService:
             relatedCard=pending_round.related_card,
             answerText=pending_round.answer_text,
             votes=pending_round.votes,
+            drawnCards=[],
             accepted=accepted,
             correctVotes=correct_votes,
             wrongVotes=wrong_votes,
@@ -123,12 +124,14 @@ class GameService:
                 pending_round.answer_text
             )
         else:
-            if room.settings.wrong_answer_behavior == WrongAnswerBehavior.RETURN_TO_HAND:
-                round_player.hand.append(pending_round.played_card.model_copy(deep=True))
-            else:
-                drawn_cards = self._draw_unlimited_cards(room, 2)
-                round_player.hand.extend(drawn_cards)
-                room.game.discard_pile.append(pending_round.played_card.model_copy(deep=True))
+            drawn_cards = self._draw_unlimited_cards(room, 2)
+            round_player.hand.extend(drawn_cards)
+            result.drawn_cards = drawn_cards
+            room.game.table_cards = [
+                card for card in room.game.table_cards if card.id != pending_round.related_card.id
+            ]
+            room.game.table_cards.append(pending_round.played_card.model_copy(deep=True))
+            room.game.discard_pile.append(pending_round.related_card.model_copy(deep=True))
 
         room.game.last_round = result
         room.game.pending_round = None
@@ -136,6 +139,14 @@ class GameService:
         if any(not player.hand for player in room.players):
             room.status = RoomStatus.FINISHED
         return room, result
+
+    def pass_turn(self, room: Room, player_id: str) -> Room:
+        player = next(player for player in room.players if player.player_id == player_id)
+        player.hand.extend(self._draw_unlimited_cards(room, 1))
+        room.game.pending_round = None
+        room.game.last_round = None
+        self._advance_turn(room)
+        return room
 
     def _advance_turn(self, room: Room) -> None:
         player_ids = [player.player_id for player in room.players]
@@ -152,13 +163,19 @@ class GameService:
     def _draw_unlimited_cards(self, room: Room, count: int) -> list[GameCard]:
         if room.game.draw_pool:
             return [
-                room.game.draw_pool[self._random.randrange(len(room.game.draw_pool))].model_copy(deep=True)
-                for _ in range(count)
+                self._copy_drawn_card(room.game.draw_pool[self._random.randrange(len(room.game.draw_pool))], index)
+                for index in range(count)
             ]
 
-        drawn = [card.model_copy(deep=True) for card in room.game.deck[:count]]
+        drawn = [self._copy_drawn_card(card, index) for index, card in enumerate(room.game.deck[:count])]
         room.game.deck = room.game.deck[count:]
         return drawn
+
+    def _copy_drawn_card(self, card: GameCard, index: int) -> GameCard:
+        return card.model_copy(
+            update={"id": f"{card.id}_draw_{self._random.randrange(1 << 32)}_{index}"},
+            deep=True,
+        )
 
     def _ensure_deck_size(self, source_cards: list[GameCard], required_count: int) -> list[GameCard]:
         if len(source_cards) >= required_count:

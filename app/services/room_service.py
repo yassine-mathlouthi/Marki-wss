@@ -163,6 +163,8 @@ class RoomService:
                 if room.game.last_round
                 else None,
             }
+            if game_payload["lastRound"] and game_payload["lastRound"].get("playerId") != viewer_player_id:
+                game_payload["lastRound"]["drawnCards"] = []
 
         return RoomSnapshot(
             roomCode=room.room_code,

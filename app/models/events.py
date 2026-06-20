@@ -56,6 +56,7 @@ IncomingEventType = Literal[
     "update_lobby_settings",
     "start_game",
     "submit_answer",
+    "pass_turn",
     "cast_vote",
     "leave_room",
     "ping",
