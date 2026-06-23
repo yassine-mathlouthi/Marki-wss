@@ -26,6 +26,8 @@ class GameService:
                 remote_cards = []
             if len(remote_cards) >= 2:
                 return remote_cards
+        if region_id == "world":
+            return [card.model_copy(deep=True) for card in self._fallback_cards]
         return [card.model_copy(deep=True) for card in self._fallback_cards if card.region_id == region_id]
 
     async def start_game(self, room: Room) -> Room:
