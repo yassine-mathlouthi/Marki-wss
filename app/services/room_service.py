@@ -162,9 +162,10 @@ class RoomService:
                 "lastRound": room.game.last_round.model_dump(mode="json", by_alias=True)
                 if room.game.last_round
                 else None,
+                "lastPass": room.game.last_pass.model_dump(mode="json", by_alias=True)
+                if room.game.last_pass
+                else None,
             }
-            if game_payload["lastRound"] and game_payload["lastRound"].get("playerId") != viewer_player_id:
-                game_payload["lastRound"]["drawnCards"] = []
 
         return RoomSnapshot(
             roomCode=room.room_code,

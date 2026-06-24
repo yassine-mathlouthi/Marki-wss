@@ -84,6 +84,18 @@ class RoundResult(BaseModel):
     )
 
 
+class PassResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    player_id: str = Field(alias="playerId")
+    player_name: str = Field(alias="playerName")
+    drawn_cards: list[GameCard] = Field(default_factory=list, alias="drawnCards")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        alias="createdAt",
+    )
+
+
 class GameState(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -93,6 +105,7 @@ class GameState(BaseModel):
     discard_pile: list[GameCard] = Field(default_factory=list, alias="discardPile")
     pending_round: PendingRound | None = Field(default=None, alias="pendingRound")
     last_round: RoundResult | None = Field(default=None, alias="lastRound")
+    last_pass: PassResult | None = Field(default=None, alias="lastPass")
     accepted_answers: dict[str, str] = Field(default_factory=dict, alias="acceptedAnswers")
 
 

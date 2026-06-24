@@ -57,7 +57,9 @@ IncomingEventType = Literal[
     "start_game",
     "submit_answer",
     "pass_turn",
+    "continue_pass_result",
     "cast_vote",
+    "continue_round_result",
     "leave_room",
     "ping",
 ]

@@ -8,7 +8,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.core.config import Settings
-from app.models.game import GameCard, PendingRound, RoundResult, Vote, VoteChoice
+from app.models.game import GameCard, PassResult, PendingRound, RoundResult, Vote, VoteChoice, WrongAnswerBehavior
 from app.models.room import Room, RoomStatus
 
 
@@ -55,6 +55,7 @@ class GameService:
         room.game.discard_pile = []
         room.game.pending_round = None
         room.game.last_round = None
+        room.game.last_pass = None
         room.current_turn_player_id = room.players[0].player_id if room.players else None
         room.status = RoomStatus.PLAYING
         for player in room.players:
@@ -83,6 +84,7 @@ class GameService:
             votes=[],
         )
         room.game.last_round = None
+        room.game.last_pass = None
         return room
 
     def cast_vote(self, room: Room, player_id: str, choice: VoteChoice) -> tuple[Room, RoundResult | None]:
@@ -127,6 +129,8 @@ class GameService:
             )
         else:
             drawn_cards = self._draw_unlimited_cards(room, 2)
+            if room.settings.wrong_answer_behavior == WrongAnswerBehavior.RETURN_TO_HAND:
+                round_player.hand.append(pending_round.played_card.model_copy(deep=True))
             round_player.hand.extend(drawn_cards)
             result.drawn_cards = drawn_cards
             room.game.table_cards = [
@@ -137,17 +141,36 @@ class GameService:
 
         room.game.last_round = result
         room.game.pending_round = None
-        self._advance_turn(room)
         if any(not player.hand for player in room.players):
             room.status = RoomStatus.FINISHED
         return room, result
 
     def pass_turn(self, room: Room, player_id: str) -> Room:
         player = next(player for player in room.players if player.player_id == player_id)
-        player.hand.extend(self._draw_unlimited_cards(room, 1))
+        drawn_cards = self._draw_unlimited_cards(room, 1)
+        player.hand.extend(drawn_cards)
         room.game.pending_round = None
         room.game.last_round = None
+        room.game.last_pass = PassResult(
+            playerId=player.player_id,
+            playerName=player.name,
+            drawnCards=drawn_cards,
+        )
         self._advance_turn(room)
+        return room
+
+    def continue_round_result(self, room: Room) -> Room:
+        if room.game.last_round is None:
+            return room
+        room.game.last_round = None
+        if room.status != RoomStatus.FINISHED:
+            self._advance_turn(room)
+        return room
+
+    def continue_pass_result(self, room: Room) -> Room:
+        if room.game.last_pass is None:
+            return room
+        room.game.last_pass = None
         return room
 
     def _advance_turn(self, room: Room) -> None:

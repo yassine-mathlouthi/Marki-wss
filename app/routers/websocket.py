@@ -146,6 +146,8 @@ async def _handle_event(
     if event_type == "submit_answer":
         if room.status != RoomStatus.PLAYING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+        if room.game.last_round is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current result first.")
         if room.current_turn_player_id != player_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
         answer_payload = SubmitAnswerPayload.model_validate(payload)
@@ -163,9 +165,19 @@ async def _handle_event(
     if event_type == "pass_turn":
         if room.status != RoomStatus.PLAYING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+        if room.game.last_round is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current result first.")
         if room.current_turn_player_id != player_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
         room = game_service.pass_turn(room, player_id)
+        room = room_service.save(room)
+        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        return
+
+    if event_type == "continue_pass_result":
+        if room.status != RoomStatus.PLAYING:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+        room = game_service.continue_pass_result(room)
         room = room_service.save(room)
         await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
         return
@@ -183,6 +195,14 @@ async def _handle_event(
         await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
         if result is not None:
             await _broadcast_round_resolved(connection_manager, room_service, room, player_id)
+        return
+
+    if event_type == "continue_round_result":
+        if room.status not in (RoomStatus.PLAYING, RoomStatus.FINISHED):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+        room = game_service.continue_round_result(room)
+        room = room_service.save(room)
+        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
         return
 
     if event_type == "leave_room":
