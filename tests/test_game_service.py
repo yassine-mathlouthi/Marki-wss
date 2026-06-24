@@ -5,6 +5,8 @@ from app.models.game import GameCard, GameState, LobbySettings, PendingRound, Vo
 from app.models.player import Player
 from app.models.room import Room, RoomStatus
 from app.services.game_service import GameService
+from app.services.in_memory import InMemoryRoomStore
+from app.services.room_service import RoomService
 
 
 def card(card_id: str) -> GameCard:
@@ -109,6 +111,55 @@ class GameServiceTest(unittest.TestCase):
 
         self.assertIsNone(room.game.last_pass)
         self.assertEqual(room.current_turn_player_id, "p2")
+
+    def test_submit_answer_rejects_missing_card_without_mutating_round(self) -> None:
+        room = Room(
+            roomCode="ABC123",
+            hostPlayerId="p1",
+            players=[Player(playerId="p1", name="A", hand=[card("a1")])],
+            status=RoomStatus.PLAYING,
+            maxPlayers=4,
+            currentTurnPlayerId="p1",
+            scores={"p1": 0},
+            settings=LobbySettings(),
+            game=GameState(tableCards=[card("table")]),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Card is not in your hand"):
+            self.service.submit_answer(room, "p1", "missing", "table", "answer")
+
+        self.assertIsNone(room.game.pending_round)
+        self.assertEqual(len(room.players[0].hand), 1)
+
+    def test_leaving_pending_round_removes_stale_vote(self) -> None:
+        room_service = RoomService(InMemoryRoomStore())
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room.game.pending_round.votes = [Vote(playerId="p3", choice=VoteChoice.WRONG)]
+        room_service.save(room)
+
+        room = room_service.leave_room("ABC123", "p3")
+
+        self.assertIsNotNone(room)
+        self.assertEqual(room.status, RoomStatus.PLAYING)
+        self.assertEqual(room.game.pending_round.votes, [])
+
+    def test_leaving_pending_round_owner_clears_round(self) -> None:
+        room_service = RoomService(InMemoryRoomStore())
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room_service.save(room)
+
+        room = room_service.leave_room("ABC123", "p1")
+
+        self.assertIsNotNone(room)
+        self.assertEqual(room.status, RoomStatus.FINISHED)
+        self.assertIsNone(room.game.pending_round)
+
+    def test_pair_key_matches_copied_and_drawn_card_ids(self) -> None:
+        key = self.service._pair_key("club_0_draw_123_0", "nation_2")
+
+        self.assertEqual(key, "club::nation")
 
 
 if __name__ == "__main__":

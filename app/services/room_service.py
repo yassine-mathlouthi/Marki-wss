@@ -65,6 +65,7 @@ class RoomService:
         if room.host_player_id == player.player_id:
             room.host_player_id = room.players[0].player_id
             room.players[0].is_host = True
+        self._remove_player_from_game(room, player.player_id)
         room.current_turn_player_id = self._resolve_current_turn(room)
         self._touch(room)
         self._store.save(room)
@@ -205,6 +206,30 @@ class RoomService:
         if room.current_turn_player_id in player_ids:
             return room.current_turn_player_id
         return room.players[0].player_id
+
+    @staticmethod
+    def _remove_player_from_game(room: Room, player_id: str) -> None:
+        if room.status != RoomStatus.PLAYING or room.game is None:
+            return
+
+        if len(room.players) < 2:
+            room.status = RoomStatus.FINISHED
+            room.game.pending_round = None
+            room.game.last_pass = None
+            return
+
+        pending_round = room.game.pending_round
+        if pending_round is None:
+            return
+
+        if pending_round.player_id == player_id:
+            room.game.pending_round = None
+            room.game.last_pass = None
+            return
+
+        pending_round.votes = [
+            vote for vote in pending_round.votes if vote.player_id != player_id
+        ]
 
     @staticmethod
     def _touch(room: Room) -> None:

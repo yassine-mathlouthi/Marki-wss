@@ -94,8 +94,13 @@ def get_websocket_router(
                 except ValueError as exc:
                     await _send_error(websocket, room.room_code, player_id, str(exc))
         except WebSocketDisconnect:
-            room = room_service.mark_connected(room.room_code, player_id, False)
             connection_manager.disconnect(room.room_code, player_id)
+            try:
+                if not room_service.player_in_room(room.room_code, player_id):
+                    return
+                room = room_service.mark_connected(room.room_code, player_id, False)
+            except HTTPException:
+                return
             await _broadcast_presence(connection_manager, room_service, room, "player_disconnected", player_id)
 
     return router
@@ -134,6 +139,8 @@ async def _handle_event(
 
     if event_type == "start_game":
         room_service.require_host(room, player_id)
+        if room.status != RoomStatus.WAITING:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game already started.")
         if len(room.players) < 2:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="At least two players are required.")
         if any(not player.is_ready for player in room.players):
@@ -148,6 +155,8 @@ async def _handle_event(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
         if room.game.last_round is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current result first.")
+        if room.game.pending_round is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current round first.")
         if room.current_turn_player_id != player_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
         answer_payload = SubmitAnswerPayload.model_validate(payload)
@@ -167,6 +176,8 @@ async def _handle_event(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
         if room.game.last_round is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current result first.")
+        if room.game.pending_round is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current round first.")
         if room.current_turn_player_id != player_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
         room = game_service.pass_turn(room, player_id)

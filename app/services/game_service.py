@@ -70,9 +70,9 @@ class GameService:
         related_card_id: str,
         answer: str,
     ) -> Room:
-        player = next(player for player in room.players if player.player_id == player_id)
-        played_card = next(card for card in player.hand if card.id == card_id)
-        related_card = next(card for card in room.game.table_cards if card.id == related_card_id)
+        player = self._player_by_id(room, player_id)
+        played_card = self._card_by_id(player.hand, card_id, "Card is not in your hand.")
+        related_card = self._card_by_id(room.game.table_cards, related_card_id, "Table card not found.")
         player.hand = [card for card in player.hand if card.id != card_id]
         pair_key = self._pair_key(played_card.id, related_card.id)
         room.game.pending_round = PendingRound(
@@ -116,7 +116,7 @@ class GameService:
             previousAcceptedAnswer=pending_round.previous_accepted_answer,
         )
 
-        round_player = next(player for player in room.players if player.player_id == pending_round.player_id)
+        round_player = self._player_by_id(room, pending_round.player_id)
         if accepted:
             room.scores[round_player.player_id] = room.scores.get(round_player.player_id, 0) + 1
             room.game.table_cards = [
@@ -146,7 +146,7 @@ class GameService:
         return room, result
 
     def pass_turn(self, room: Room, player_id: str) -> Room:
-        player = next(player for player in room.players if player.player_id == player_id)
+        player = self._player_by_id(room, player_id)
         drawn_cards = self._draw_unlimited_cards(room, 1)
         player.hand.extend(drawn_cards)
         room.game.pending_round = None
@@ -195,6 +195,20 @@ class GameService:
         drawn = [self._copy_drawn_card(card, index) for index, card in enumerate(room.game.deck[:count])]
         room.game.deck = room.game.deck[count:]
         return drawn
+
+    @staticmethod
+    def _player_by_id(room: Room, player_id: str):
+        for player in room.players:
+            if player.player_id == player_id:
+                return player
+        raise ValueError("Player not found in this room.")
+
+    @staticmethod
+    def _card_by_id(cards: list[GameCard], card_id: str, error_message: str) -> GameCard:
+        for card in cards:
+            if card.id == card_id:
+                return card
+        raise ValueError(error_message)
 
     def _copy_drawn_card(self, card: GameCard, index: int) -> GameCard:
         return card.model_copy(
@@ -258,6 +272,8 @@ class GameService:
 
     @staticmethod
     def _canonical_card_id(card_id: str) -> str:
+        if "_draw_" in card_id:
+            return GameService._canonical_card_id(card_id.split("_draw_", 1)[0])
         if "_" not in card_id:
             return card_id
         prefix, suffix = card_id.rsplit("_", 1)
