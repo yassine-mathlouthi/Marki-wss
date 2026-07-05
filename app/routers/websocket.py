@@ -188,6 +188,8 @@ async def _handle_event(
     if event_type == "continue_pass_result":
         if room.status != RoomStatus.PLAYING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+        if room.game.last_pass is not None and room.game.last_pass.player_id != player_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the passing player can resolve this draw.")
         room = game_service.continue_pass_result(room)
         room = room_service.save(room)
         await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)

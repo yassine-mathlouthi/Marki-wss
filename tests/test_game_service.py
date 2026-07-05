@@ -85,7 +85,7 @@ class GameServiceTest(unittest.TestCase):
         self.assertIsNone(room.game.last_round)
         self.assertEqual(room.current_turn_player_id, "p2")
 
-    def test_pass_turn_draws_one_and_advances_immediately(self) -> None:
+    def test_pass_turn_draws_one_and_advances_after_result(self) -> None:
         player_one = Player(playerId="p1", name="A", hand=[card("a1")])
         player_two = Player(playerId="p2", name="B", hand=[card("b1")])
         room = Room(
@@ -105,12 +105,49 @@ class GameServiceTest(unittest.TestCase):
         self.assertIsNotNone(room.game.last_pass)
         self.assertEqual(len(room.game.last_pass.drawn_cards), 1)
         self.assertEqual(len(player_one.hand), 2)
-        self.assertEqual(room.current_turn_player_id, "p2")
+        self.assertEqual(room.current_turn_player_id, "p1")
 
         room = self.service.continue_pass_result(room)
 
         self.assertIsNone(room.game.last_pass)
         self.assertEqual(room.current_turn_player_id, "p2")
+
+    def test_pass_result_is_only_visible_to_passing_player(self) -> None:
+        room_service = RoomService(InMemoryRoomStore())
+        player_one = Player(playerId="p1", name="A", hand=[card("a1")])
+        player_two = Player(playerId="p2", name="B", hand=[card("b1")])
+        room = Room(
+            roomCode="ABC123",
+            hostPlayerId="p1",
+            players=[player_one, player_two],
+            status=RoomStatus.PLAYING,
+            maxPlayers=4,
+            currentTurnPlayerId="p1",
+            scores={"p1": 0, "p2": 0},
+            settings=LobbySettings(),
+            game=GameState(drawPool=[card("draw1"), card("draw2")]),
+        )
+        room = self.service.pass_turn(room, "p1")
+
+        passer_snapshot = room_service.build_snapshot(room, "p1")
+        next_player_snapshot = room_service.build_snapshot(room, "p2")
+
+        self.assertIsNotNone(passer_snapshot.game["lastPass"])
+        self.assertIsNone(next_player_snapshot.game["lastPass"])
+        self.assertEqual(next_player_snapshot.current_turn_player_id, "p1")
+
+    def test_wrong_answer_draws_two_cards_in_player_snapshot(self) -> None:
+        room_service = RoomService(InMemoryRoomStore())
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+
+        room, result = self.service.cast_vote(room, "p2", VoteChoice.WRONG)
+        snapshot = room_service.build_snapshot(room, "p1")
+        player = next(player for player in snapshot.players if player.player_id == "p1")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result.drawn_cards), 2)
+        self.assertEqual(player.hand_count, 3)
+        self.assertEqual(len(player.hand), 3)
 
     def test_submit_answer_rejects_missing_card_without_mutating_round(self) -> None:
         room = Room(

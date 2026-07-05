@@ -28,7 +28,14 @@ class GameService:
                 return remote_cards
         if region_id == "world":
             return [card.model_copy(deep=True) for card in self._fallback_cards]
-        return [card.model_copy(deep=True) for card in self._fallback_cards if card.region_id == region_id]
+        region_cards = [
+            card.model_copy(deep=True)
+            for card in self._fallback_cards
+            if card.region_id == region_id
+        ]
+        if len(region_cards) >= 2:
+            return region_cards
+        return [card.model_copy(deep=True) for card in self._fallback_cards]
 
     async def start_game(self, room: Room) -> Room:
         cards = await self.load_cards(room.settings.region_id)
@@ -156,7 +163,6 @@ class GameService:
             playerName=player.name,
             drawnCards=drawn_cards,
         )
-        self._advance_turn(room)
         return room
 
     def continue_round_result(self, room: Room) -> Room:
@@ -171,6 +177,7 @@ class GameService:
         if room.game.last_pass is None:
             return room
         room.game.last_pass = None
+        self._advance_turn(room)
         return room
 
     def _advance_turn(self, room: Room) -> None:
@@ -254,6 +261,7 @@ class GameService:
             root / "Marki-wss" / "app" / "data" / "cards" / "common_numbers.json",
             root / "frontend" / "assets" / "data" / "cards" / "tunisia_clubs.json",
             root / "frontend" / "assets" / "data" / "cards" / "common_numbers.json",
+            root / "frontend" / "premier_league.json",
         ]
         cards: list[GameCard] = []
         loaded_paths: set[Path] = set()

@@ -154,6 +154,9 @@ class RoomService:
                     pending_round["votes"] = [
                         vote for vote in pending_round["votes"] if vote["playerId"] == viewer_player_id
                     ]
+            last_pass = room.game.last_pass
+            if last_pass is not None and last_pass.player_id != viewer_player_id:
+                last_pass = None
             game_payload = {
                 "tableCards": [card.model_dump(mode="json", by_alias=True) for card in room.game.table_cards],
                 "discardPile": [card.model_dump(mode="json", by_alias=True) for card in room.game.discard_pile],
@@ -163,8 +166,8 @@ class RoomService:
                 "lastRound": room.game.last_round.model_dump(mode="json", by_alias=True)
                 if room.game.last_round
                 else None,
-                "lastPass": room.game.last_pass.model_dump(mode="json", by_alias=True)
-                if room.game.last_pass
+                "lastPass": last_pass.model_dump(mode="json", by_alias=True)
+                if last_pass
                 else None,
             }
 
