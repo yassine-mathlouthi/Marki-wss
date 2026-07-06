@@ -16,16 +16,31 @@ class ConnectionManager:
 
     async def connect(self, room_code: str, player_id: str, websocket: WebSocket) -> None:
         await websocket.accept()
+        previous_websocket = self._connections[room_code].get(player_id)
         self._connections[room_code][player_id] = websocket
+        if previous_websocket is not None and previous_websocket is not websocket:
+            try:
+                await previous_websocket.close()
+            except Exception:
+                pass
 
-    def disconnect(self, room_code: str, player_id: str) -> None:
+    def disconnect(
+        self,
+        room_code: str,
+        player_id: str,
+        websocket: WebSocket | None = None,
+    ) -> bool:
         room_connections = self._connections.get(room_code)
         if not room_connections:
-            return
+            return False
+
+        if websocket is not None and room_connections.get(player_id) is not websocket:
+            return False
 
         room_connections.pop(player_id, None)
         if not room_connections:
             self._connections.pop(room_code, None)
+        return True
 
     async def send_to_player(
         self,
@@ -41,15 +56,15 @@ class ConnectionManager:
 
     async def broadcast(self, room_code: str, event: GameEvent) -> None:
         room_connections = list(self._connections.get(room_code, {}).items())
-        stale_player_ids: list[str] = []
+        stale_connections: list[tuple[str, WebSocket]] = []
 
         for player_id, websocket in room_connections:
             sent = await self._safe_send(websocket, event)
             if not sent:
-                stale_player_ids.append(player_id)
+                stale_connections.append((player_id, websocket))
 
-        for player_id in stale_player_ids:
-            self.disconnect(room_code, player_id)
+        for player_id, websocket in stale_connections:
+            self.disconnect(room_code, player_id, websocket)
 
     async def broadcast_except(
         self,
@@ -58,7 +73,7 @@ class ConnectionManager:
         event: GameEvent,
     ) -> None:
         room_connections = list(self._connections.get(room_code, {}).items())
-        stale_player_ids: list[str] = []
+        stale_connections: list[tuple[str, WebSocket]] = []
 
         for player_id, websocket in room_connections:
             if player_id == excluded_player_id:
@@ -66,10 +81,10 @@ class ConnectionManager:
 
             sent = await self._safe_send(websocket, event)
             if not sent:
-                stale_player_ids.append(player_id)
+                stale_connections.append((player_id, websocket))
 
-        for player_id in stale_player_ids:
-            self.disconnect(room_code, player_id)
+        for player_id, websocket in stale_connections:
+            self.disconnect(room_code, player_id, websocket)
 
     async def _safe_send(self, websocket: WebSocket, event: GameEvent) -> bool:
         try:

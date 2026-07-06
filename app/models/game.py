@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+
+ALLOWED_CARDS_PER_PLAYER = {4, 6, 8, 11, 14}
 
 
 class WrongAnswerBehavior(str, Enum):
@@ -33,12 +36,19 @@ class LobbySettings(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     region_id: str = Field(default="tunisia", alias="regionId")
-    cards_per_player: int = Field(default=11, alias="cardsPerPlayer", ge=3, le=20)
+    cards_per_player: int = Field(default=11, alias="cardsPerPlayer")
     language: str = Field(default="en", min_length=2, max_length=8)
     wrong_answer_behavior: WrongAnswerBehavior = Field(
         default=WrongAnswerBehavior.DISCARD_CARD,
         alias="wrongAnswerBehavior",
     )
+
+    @field_validator("cards_per_player")
+    @classmethod
+    def validate_cards_per_player(cls, value: int) -> int:
+        if value not in ALLOWED_CARDS_PER_PLAYER:
+            raise ValueError("cardsPerPlayer must be one of 4, 6, 8, 11, or 14.")
+        return value
 
 
 class Vote(BaseModel):

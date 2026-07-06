@@ -94,7 +94,13 @@ def get_websocket_router(
                 except ValueError as exc:
                     await _send_error(websocket, room.room_code, player_id, str(exc))
         except WebSocketDisconnect:
-            connection_manager.disconnect(room.room_code, player_id)
+            disconnected_active_socket = connection_manager.disconnect(
+                room.room_code,
+                player_id,
+                websocket,
+            )
+            if not disconnected_active_socket:
+                return
             try:
                 if not room_service.player_in_room(room.room_code, player_id):
                     return
