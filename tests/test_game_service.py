@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 
 from app.core.config import Settings
@@ -197,6 +198,13 @@ class GameServiceTest(unittest.TestCase):
         key = self.service._pair_key("club_0_draw_123_0", "nation_2")
 
         self.assertEqual(key, "club::nation")
+
+    def test_load_cards_does_not_mix_unrelated_fallback_regions(self) -> None:
+        self.service._fallback_cards = [card("tunisia1"), card("tunisia2")]
+
+        cards = asyncio.run(self.service.load_cards("europe"))
+
+        self.assertEqual(cards, [])
 
 
 if __name__ == "__main__":

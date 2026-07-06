@@ -33,9 +33,7 @@ class GameService:
             for card in self._fallback_cards
             if card.region_id == region_id
         ]
-        if len(region_cards) >= 2:
-            return region_cards
-        return [card.model_copy(deep=True) for card in self._fallback_cards]
+        return region_cards
 
     async def start_game(self, room: Room) -> Room:
         cards = await self.load_cards(room.settings.region_id)
