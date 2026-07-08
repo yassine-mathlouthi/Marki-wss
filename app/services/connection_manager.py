@@ -47,12 +47,15 @@ class ConnectionManager:
         room_code: str,
         player_id: str,
         event: GameEvent,
-    ) -> None:
+    ) -> bool:
         websocket = self._connections.get(room_code, {}).get(player_id)
         if websocket is None:
-            return
+            return False
 
-        await self._safe_send(websocket, event)
+        sent = await self._safe_send(websocket, event)
+        if not sent:
+            self.disconnect(room_code, player_id, websocket)
+        return sent
 
     async def broadcast(self, room_code: str, event: GameEvent) -> None:
         room_connections = list(self._connections.get(room_code, {}).items())

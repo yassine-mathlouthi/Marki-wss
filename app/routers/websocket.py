@@ -253,8 +253,8 @@ async def _send_snapshot(
     target_player_id: str,
     event_type: str,
     actor_player_id: str,
-) -> None:
-    await connection_manager.send_to_player(
+) -> bool:
+    return await connection_manager.send_to_player(
         room.room_code,
         target_player_id,
         GameEvent(
@@ -273,8 +273,28 @@ async def _broadcast_snapshot(
     event_type: str,
     actor_player_id: str,
 ) -> None:
+    stale_player_ids: list[str] = []
     for player in room.players:
-        await _send_snapshot(connection_manager, room_service, room, player.player_id, event_type, actor_player_id)
+        sent = await _send_snapshot(connection_manager, room_service, room, player.player_id, event_type, actor_player_id)
+        if not sent and player.is_connected:
+            stale_player_ids.append(player.player_id)
+
+    if not stale_player_ids:
+        return
+
+    for player_id in stale_player_ids:
+        room = room_service.mark_connected(room.room_code, player_id, False)
+
+    for player in room.players:
+        if player.player_id not in stale_player_ids:
+            await _send_snapshot(
+                connection_manager,
+                room_service,
+                room,
+                player.player_id,
+                "player_disconnected",
+                actor_player_id,
+            )
 
 
 async def _broadcast_presence(
