@@ -156,6 +156,15 @@ async def _handle_event(
         await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
         return
 
+    if event_type == "replay_game":
+        room_service.require_host(room, player_id)
+        if room.status != RoomStatus.FINISHED:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game has not finished.")
+        room = game_service.reset_game(room)
+        room = room_service.save(room)
+        await _broadcast_snapshot(connection_manager, room_service, room, "room_snapshot", player_id)
+        return
+
     if event_type == "submit_answer":
         if room.status != RoomStatus.PLAYING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")

@@ -8,7 +8,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.core.config import Settings
-from app.models.game import GameCard, PassResult, PendingRound, RoundResult, Vote, VoteChoice, WrongAnswerBehavior
+from app.models.game import GameCard, GameState, PassResult, PendingRound, RoundResult, Vote, VoteChoice, WrongAnswerBehavior
 from app.models.room import Room, RoomStatus
 
 
@@ -65,6 +65,16 @@ class GameService:
         room.status = RoomStatus.PLAYING
         for player in room.players:
             room.scores[player.player_id] = 0
+        return room
+
+    def reset_game(self, room: Room) -> Room:
+        room.game = GameState()
+        room.status = RoomStatus.WAITING
+        room.current_turn_player_id = room.players[0].player_id if room.players else None
+        room.scores = {player.player_id: 0 for player in room.players}
+        for player in room.players:
+            player.hand = []
+            player.is_ready = False
         return room
 
     def submit_answer(

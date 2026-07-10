@@ -206,6 +206,23 @@ class GameServiceTest(unittest.TestCase):
 
         self.assertEqual(cards, [])
 
+    def test_reset_game_returns_finished_room_to_a_ready_lobby(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.status = RoomStatus.FINISHED
+        room.players[0].is_ready = True
+        room.players[1].is_ready = True
+        room.scores = {"p1": 3, "p2": 1}
+        room.game.accepted_answers["played::related"] = "answer"
+
+        room = self.service.reset_game(room)
+
+        self.assertEqual(room.status, RoomStatus.WAITING)
+        self.assertEqual(room.current_turn_player_id, "p1")
+        self.assertEqual(room.scores, {"p1": 0, "p2": 0})
+        self.assertFalse(any(player.is_ready for player in room.players))
+        self.assertTrue(all(not player.hand for player in room.players))
+        self.assertEqual(room.game, GameState())
+
 
 if __name__ == "__main__":
     unittest.main()
