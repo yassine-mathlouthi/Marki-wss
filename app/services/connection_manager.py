@@ -14,8 +14,16 @@ class ConnectionManager:
         # and broadcast room events through Redis pub/sub so all instances stay in sync.
         self._connections: DefaultDict[str, dict[str, WebSocket]] = defaultdict(dict)
 
-    async def connect(self, room_code: str, player_id: str, websocket: WebSocket) -> None:
-        await websocket.accept()
+    async def connect(
+        self,
+        room_code: str,
+        player_id: str,
+        websocket: WebSocket,
+        *,
+        accept: bool = True,
+    ) -> None:
+        if accept:
+            await websocket.accept()
         previous_websocket = self._connections[room_code].get(player_id)
         self._connections[room_code][player_id] = websocket
         if previous_websocket is not None and previous_websocket is not websocket:

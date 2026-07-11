@@ -17,13 +17,13 @@ class RoomStatus(str, Enum):
 
 
 class Room(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, validate_assignment=True)
 
     room_code: str = Field(min_length=1, max_length=6, alias="roomCode")
     host_player_id: str = Field(alias="hostPlayerId")
     players: list[Player] = Field(default_factory=list)
     status: RoomStatus = RoomStatus.WAITING
-    max_players: int = Field(ge=2, le=8, alias="maxPlayers")
+    max_players: int = Field(ge=2, le=8, strict=True, alias="maxPlayers")
     current_turn_player_id: Optional[str] = Field(
         default=None,
         alias="currentTurnPlayerId",
@@ -42,10 +42,10 @@ class Room(BaseModel):
 
 
 class CreateRoomRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     host_name: str = Field(min_length=1, max_length=32, alias="hostName")
-    max_players: int = Field(ge=2, le=8, alias="maxPlayers")
+    max_players: int = Field(ge=2, le=8, strict=True, alias="maxPlayers")
     settings: LobbySettings = Field(default_factory=LobbySettings)
 
 
@@ -67,6 +67,7 @@ class CreateRoomResponse(BaseModel):
 
     room_code: str = Field(alias="roomCode")
     player_id: str = Field(alias="playerId")
+    session_token: str = Field(alias="sessionToken")
     room: Room
 
 
@@ -75,4 +76,5 @@ class JoinRoomResponse(BaseModel):
 
     room_code: str = Field(alias="roomCode")
     player_id: str = Field(alias="playerId")
+    session_token: str = Field(alias="sessionToken")
     room: Room

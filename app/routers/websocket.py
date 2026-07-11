@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -32,14 +33,30 @@ def get_websocket_router(
     ) -> None:
         try:
             room = room_service.get_room(room_code)
-            if not room_service.player_in_room(room.room_code, player_id):
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Player not in room.")
-                return
         except HTTPException:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid room or player.")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid room or player session.")
             return
 
-        await connection_manager.connect(room.room_code, player_id, websocket)
+        await websocket.accept()
+        try:
+            auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=8)
+            if not isinstance(auth_message, dict) or auth_message.get("type") != "authenticate":
+                raise ValueError
+            room_service.authenticate_player(
+                room,
+                player_id,
+                str(auth_message.get("sessionToken", "")),
+            )
+        except (asyncio.TimeoutError, HTTPException, ValueError, WebSocketDisconnect):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid room or player session.")
+            return
+
+        await connection_manager.connect(
+            room.room_code,
+            player_id,
+            websocket,
+            accept=False,
+        )
         room = room_service.mark_connected(room.room_code, player_id, True)
         await _send_snapshot(connection_manager, room_service, room, player_id, "room_snapshot", player_id)
         await _broadcast_presence(connection_manager, room_service, room, "player_connected", player_id)

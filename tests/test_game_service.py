@@ -1,6 +1,9 @@
 import asyncio
 import unittest
 
+from fastapi import HTTPException
+from pydantic import ValidationError
+
 from app.core.config import Settings
 from app.models.game import GameCard, GameState, LobbySettings, PendingRound, Vote, VoteChoice, WrongAnswerBehavior
 from app.models.player import Player
@@ -222,6 +225,44 @@ class GameServiceTest(unittest.TestCase):
         self.assertFalse(any(player.is_ready for player in room.players))
         self.assertTrue(all(not player.hand for player in room.players))
         self.assertEqual(room.game, GameState())
+
+    def test_lobby_models_validate_assignment(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+
+        with self.assertRaises(ValidationError):
+            room.settings.cards_per_player = 1_000_000
+        with self.assertRaises(ValidationError):
+            room.max_players = 1_000_000
+
+        self.assertEqual(room.settings.cards_per_player, 11)
+        self.assertEqual(room.max_players, 4)
+
+    def test_lobby_update_is_atomic_when_capacity_is_invalid(self) -> None:
+        room_service = RoomService(InMemoryRoomStore())
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.status = RoomStatus.WAITING
+        room_service.save(room)
+
+        with self.assertRaises(HTTPException):
+            room_service.update_lobby_settings(
+                room.room_code,
+                room.host_player_id,
+                region_id="world",
+                max_players=1,
+            )
+
+        stored = room_service.get_room(room.room_code)
+        self.assertEqual(stored.settings.region_id, "tunisia")
+        self.assertEqual(stored.max_players, 4)
+
+    def test_start_game_rejects_deck_allocation_above_hard_limit(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        object.__setattr__(room.settings, "cards_per_player", 1_000_000)
+
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(self.service.start_game(room))
+
+        self.assertEqual(raised.exception.status_code, 422)
 
 
 if __name__ == "__main__":

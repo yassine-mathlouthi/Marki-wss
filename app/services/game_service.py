@@ -11,6 +11,8 @@ from app.core.config import Settings
 from app.models.game import GameCard, GameState, PassResult, PendingRound, RoundResult, Vote, VoteChoice, WrongAnswerBehavior
 from app.models.room import Room, RoomStatus
 
+MAX_REQUIRED_DECK_SIZE = (8 * 14) + 2 + (8 * 3)
+
 
 class GameService:
     def __init__(self, settings: Settings, randomizer: random.Random | None = None) -> None:
@@ -36,13 +38,18 @@ class GameService:
         return region_cards
 
     async def start_game(self, room: Room) -> Room:
+        required_count = (len(room.players) * room.settings.cards_per_player) + 2 + (len(room.players) * 3)
+        if required_count > MAX_REQUIRED_DECK_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Requested game size exceeds the supported limit.",
+            )
         cards = await self.load_cards(room.settings.region_id)
         if len(cards) < 2:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Not enough cards are available for this region.",
             )
-        required_count = (len(room.players) * room.settings.cards_per_player) + 2 + (len(room.players) * 3)
         deck = self._ensure_deck_size(cards, required_count)
         self._random.shuffle(deck)
 

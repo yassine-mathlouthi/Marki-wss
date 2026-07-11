@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.game import VoteChoice, WrongAnswerBehavior
+from app.models.game import ALLOWED_CARDS_PER_PLAYER, VoteChoice, WrongAnswerBehavior
 
 
 class GameEvent(BaseModel):
@@ -25,16 +25,39 @@ class ReadyPayload(BaseModel):
 
 
 class UpdateLobbySettingsPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    region_id: str | None = Field(default=None, alias="regionId")
-    cards_per_player: int | None = Field(default=None, alias="cardsPerPlayer")
-    language: str | None = None
+    region_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        strict=True,
+        alias="regionId",
+    )
+    cards_per_player: int | None = Field(
+        default=None,
+        strict=True,
+        alias="cardsPerPlayer",
+    )
+    language: str | None = Field(default=None, min_length=2, max_length=8, strict=True)
     wrong_answer_behavior: WrongAnswerBehavior | None = Field(
         default=None,
         alias="wrongAnswerBehavior",
     )
-    max_players: int | None = Field(default=None, alias="maxPlayers")
+    max_players: int | None = Field(
+        default=None,
+        ge=2,
+        le=8,
+        strict=True,
+        alias="maxPlayers",
+    )
+
+    @field_validator("cards_per_player")
+    @classmethod
+    def validate_cards_per_player(cls, value: int | None) -> int | None:
+        if value is not None and value not in ALLOWED_CARDS_PER_PLAYER:
+            raise ValueError("cardsPerPlayer must be one of 4, 6, 8, 11, or 14.")
+        return value
 
 
 class SubmitAnswerPayload(BaseModel):

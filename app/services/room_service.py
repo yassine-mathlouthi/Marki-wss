@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
+from hmac import compare_digest
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 
-from app.models.game import GameState, LobbySettings, RoomSnapshot, RoomSnapshotPlayer
+from app.models.game import (
+    GameState,
+    LobbySettings,
+    RoomSnapshot,
+    RoomSnapshotPlayer,
+    WrongAnswerBehavior,
+)
 from app.models.player import Player
 from app.models.room import Room, RoomStatus
 from app.services.interfaces import RoomStore
@@ -14,9 +23,15 @@ class RoomService:
     def __init__(self, store: RoomStore) -> None:
         self._store = store
 
-    def create_room(self, host_name: str, max_players: int, settings: LobbySettings) -> tuple[Room, Player]:
+    def create_room(self, host_name: str, max_players: int, settings: LobbySettings) -> tuple[Room, Player, str]:
         room_code = self._store.generate_room_code()
-        host_player = Player(name=host_name.strip(), is_host=True, is_connected=False)
+        session_token = self._generate_session_token()
+        host_player = Player(
+            name=host_name.strip(),
+            is_host=True,
+            is_connected=False,
+            session_token_hash=self._hash_session_token(session_token),
+        )
         now = self._now()
         room = Room(
             roomCode=room_code,
@@ -32,20 +47,24 @@ class RoomService:
             updatedAt=now,
         )
         self._store.save(room)
-        return room, host_player
+        return room, host_player, session_token
 
-    def join_room(self, room_code: str, player_name: str) -> tuple[Room, Player]:
+    def join_room(self, room_code: str, player_name: str) -> tuple[Room, Player, str]:
         room = self.get_room(room_code)
         if room.status != RoomStatus.WAITING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This room has already started.")
         if len(room.players) >= room.max_players:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This room is full.")
-        player = Player(name=player_name.strip())
+        session_token = self._generate_session_token()
+        player = Player(
+            name=player_name.strip(),
+            session_token_hash=self._hash_session_token(session_token),
+        )
         room.players.append(player)
         room.scores[player.player_id] = 0
         self._touch(room)
         self._store.save(room)
-        return room, player
+        return room, player, session_token
 
     def get_room(self, room_code: str) -> Room:
         normalized_code = self.normalize_room_code(room_code)
@@ -97,24 +116,29 @@ class RoomService:
         region_id: str | None = None,
         cards_per_player: int | None = None,
         language: str | None = None,
-        wrong_answer_behavior=None,
+        wrong_answer_behavior: WrongAnswerBehavior | None = None,
         max_players: int | None = None,
     ) -> Room:
         room = self.get_room(room_code)
         self.require_host(room, player_id)
         if room.status != RoomStatus.WAITING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot edit lobby after game start.")
-        if region_id:
-            room.settings.region_id = region_id
-        if cards_per_player:
-            room.settings.cards_per_player = cards_per_player
-        if language:
-            room.settings.language = language
-        if wrong_answer_behavior:
-            room.settings.wrong_answer_behavior = wrong_answer_behavior
-        if max_players:
-            if max_players < len(room.players):
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="maxPlayers is below joined players.")
+        if max_players is not None and max_players < len(room.players):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="maxPlayers is below joined players.")
+
+        settings_data = room.settings.model_dump()
+        if region_id is not None:
+            settings_data["region_id"] = region_id
+        if cards_per_player is not None:
+            settings_data["cards_per_player"] = cards_per_player
+        if language is not None:
+            settings_data["language"] = language
+        if wrong_answer_behavior is not None:
+            settings_data["wrong_answer_behavior"] = wrong_answer_behavior
+
+        updated_settings = LobbySettings.model_validate(settings_data)
+        room.settings = updated_settings
+        if max_players is not None:
             room.max_players = max_players
         self._touch(room)
         self._store.save(room)
@@ -194,6 +218,22 @@ class RoomService:
                 return player
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Player not found in this room.")
 
+    def authenticate_player(self, room: Room, player_id: str, session_token: str) -> Player:
+        player = self.get_player(room, player_id)
+        if not compare_digest(
+            player.session_token_hash,
+            self._hash_session_token(session_token),
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid player session.")
+        return player
+
+    def authenticate_session(self, room: Room, session_token: str) -> Player:
+        token_hash = self._hash_session_token(session_token)
+        for player in room.players:
+            if compare_digest(player.session_token_hash, token_hash):
+                return player
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid player session.")
+
     @staticmethod
     def normalize_room_code(room_code: str) -> str:
         normalized = room_code.strip().upper()
@@ -241,3 +281,11 @@ class RoomService:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _generate_session_token() -> str:
+        return secrets.token_urlsafe(32)
+
+    @staticmethod
+    def _hash_session_token(session_token: str) -> str:
+        return hashlib.sha256(session_token.encode("utf-8")).hexdigest()

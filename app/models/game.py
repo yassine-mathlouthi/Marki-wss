@@ -33,11 +33,21 @@ class GameCard(BaseModel):
 
 
 class LobbySettings(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+        validate_assignment=True,
+    )
 
-    region_id: str = Field(default="tunisia", alias="regionId")
-    cards_per_player: int = Field(default=11, alias="cardsPerPlayer")
-    language: str = Field(default="en", min_length=2, max_length=8)
+    region_id: str = Field(
+        default="tunisia",
+        min_length=1,
+        max_length=64,
+        strict=True,
+        alias="regionId",
+    )
+    cards_per_player: int = Field(default=11, strict=True, alias="cardsPerPlayer")
+    language: str = Field(default="en", min_length=2, max_length=8, strict=True)
     wrong_answer_behavior: WrongAnswerBehavior = Field(
         default=WrongAnswerBehavior.DISCARD_CARD,
         alias="wrongAnswerBehavior",

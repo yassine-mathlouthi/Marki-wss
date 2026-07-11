@@ -11,6 +11,7 @@ class Player(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     player_id: str = Field(default_factory=lambda: str(uuid4()), alias="playerId")
+    session_token_hash: str = Field(default="", exclude=True, repr=False)
     name: str = Field(min_length=1, max_length=32)
     is_host: bool = Field(default=False, alias="isHost")
     is_ready: bool = Field(default=False, alias="isReady")
