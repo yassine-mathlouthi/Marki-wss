@@ -21,6 +21,7 @@ class InMemoryRoomStore(RoomStore):
         raise RuntimeError("Unable to create a unique room code.")
 
     def save(self, room: Room) -> Room:
+        room.version += 1
         self._rooms[room.room_code] = room
         return room
 
@@ -29,6 +30,9 @@ class InMemoryRoomStore(RoomStore):
 
     def delete(self, room_code: str) -> None:
         self._rooms.pop(room_code, None)
+
+    def list_rooms(self) -> list[Room]:
+        return list(self._rooms.values())
 
 
 class InMemoryRoomEventBus(RoomEventBus):

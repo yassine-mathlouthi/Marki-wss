@@ -20,6 +20,10 @@ class GameService:
         self._random = randomizer or random.Random()
         self._fallback_cards = self._load_fallback_cards()
 
+    @property
+    def disconnect_grace_seconds(self) -> float:
+        return self._settings.disconnect_grace_seconds
+
     async def load_cards(self, region_id: str) -> list[GameCard]:
         if self._settings.cards_api_base_url:
             try:
@@ -114,12 +118,38 @@ class GameService:
         if pending_round is None:
             raise ValueError("No pending round.")
 
+        self._player_by_id(room, player_id)
+        eligible_voters = self.eligible_voter_ids(room)
+        if player_id not in eligible_voters:
+            raise ValueError("Player is not eligible to vote in this round.")
+
         votes = [vote for vote in pending_round.votes if vote.player_id != player_id]
         votes.append(Vote(playerId=player_id, choice=choice))
         pending_round.votes = votes
 
-        expected_voters = [player.player_id for player in room.players if player.player_id != pending_round.player_id]
-        if sorted(vote.player_id for vote in pending_round.votes) != sorted(expected_voters):
+        return self.reconcile_pending_round(room)
+
+    def eligible_voter_ids(self, room: Room) -> set[str]:
+        pending_round = room.game.pending_round
+        if pending_round is None:
+            return set()
+        return {
+            player.player_id
+            for player in room.players
+            if player.player_id != pending_round.player_id and not player.voting_excluded
+        }
+
+    def reconcile_pending_round(self, room: Room) -> tuple[Room, RoundResult | None]:
+        pending_round = room.game.pending_round
+        if pending_round is None:
+            return room, None
+
+        eligible_voters = self.eligible_voter_ids(room)
+        pending_round.votes = [
+            vote for vote in pending_round.votes if vote.player_id in eligible_voters
+        ]
+        voted_ids = {vote.player_id for vote in pending_round.votes}
+        if not eligible_voters.issubset(voted_ids):
             return room, None
 
         correct_votes = len([vote for vote in pending_round.votes if vote.choice == VoteChoice.CORRECT])

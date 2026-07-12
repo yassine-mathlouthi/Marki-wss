@@ -15,6 +15,20 @@ class Settings:
             or None
         )
         self.cards_api_timeout = float(os.getenv("CARDS_API_TIMEOUT", "10"))
+        self.disconnect_grace_seconds = max(
+            0.0,
+            float(os.getenv("DISCONNECT_GRACE_SECONDS", "30")),
+        )
+        self.room_create_rate_limit = max(1, int(os.getenv("ROOM_CREATE_RATE_LIMIT", "5")))
+        self.room_join_rate_limit = max(1, int(os.getenv("ROOM_JOIN_RATE_LIMIT", "20")))
+        self.room_rate_window_seconds = max(1.0, float(os.getenv("ROOM_RATE_WINDOW_SECONDS", "60")))
+        self.max_active_rooms_per_ip = max(1, int(os.getenv("MAX_ACTIVE_ROOMS_PER_IP", "5")))
+        self.max_sockets_per_ip = max(1, int(os.getenv("MAX_SOCKETS_PER_IP", "10")))
+        self.ws_max_frame_bytes = max(1024, int(os.getenv("WS_MAX_FRAME_BYTES", "65536")))
+        self.ws_event_rate_limit = max(1, int(os.getenv("WS_EVENT_RATE_LIMIT", "30")))
+        self.ws_event_rate_window_seconds = max(1.0, float(os.getenv("WS_EVENT_RATE_WINDOW_SECONDS", "10")))
+        self.abandoned_room_ttl_seconds = max(1.0, float(os.getenv("ABANDONED_ROOM_TTL_SECONDS", "1800")))
+        self.room_cleanup_interval_seconds = max(1.0, float(os.getenv("ROOM_CLEANUP_INTERVAL_SECONDS", "30")))
         self.cors_allow_origins = [
             origin.strip() for origin in allowed_origins.split(",") if origin.strip()
         ] or ["*"]

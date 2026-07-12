@@ -16,6 +16,9 @@ class Player(BaseModel):
     is_host: bool = Field(default=False, alias="isHost")
     is_ready: bool = Field(default=False, alias="isReady")
     is_connected: bool = Field(default=False, alias="isConnected")
+    disconnected_at: datetime | None = Field(default=None, alias="disconnectedAt")
+    connection_epoch: int = Field(default=0, alias="connectionEpoch")
+    voting_excluded: bool = Field(default=False, exclude=True)
     hand: list[GameCard] = Field(default_factory=list)
     joined_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),

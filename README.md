@@ -55,6 +55,14 @@ pip install -r requirements.txt
 export CORS_ALLOW_ORIGINS="http://localhost:3000,http://localhost:5173"
 export APP_NAME="MARKI Game Server"
 export ENVIRONMENT="development"
+export DISCONNECT_GRACE_SECONDS="30"
+export ROOM_CREATE_RATE_LIMIT="5"
+export ROOM_JOIN_RATE_LIMIT="20"
+export MAX_ACTIVE_ROOMS_PER_IP="5"
+export MAX_SOCKETS_PER_IP="10"
+export WS_MAX_FRAME_BYTES="65536"
+export WS_EVENT_RATE_LIMIT="30"
+export ABANDONED_ROOM_TTL_SECONDS="1800"
 ```
 
 4. Start the server:
@@ -91,6 +99,14 @@ services:
 CORS_ALLOW_ORIGINS=https://your-flutter-web-preview.example.com
 APP_NAME=MARKI Game Server
 ENVIRONMENT=production
+DISCONNECT_GRACE_SECONDS=30
+ROOM_CREATE_RATE_LIMIT=5
+ROOM_JOIN_RATE_LIMIT=20
+MAX_ACTIVE_ROOMS_PER_IP=5
+MAX_SOCKETS_PER_IP=10
+WS_MAX_FRAME_BYTES=65536
+WS_EVENT_RATE_LIMIT=30
+ABANDONED_ROOM_TTL_SECONDS=1800
 ```
 
 ## REST API
@@ -232,11 +248,22 @@ All events use this structure:
 
 ### Client Event Examples
 
+Every mutating event must include a stable `commandId`. The server returns a
+`command_result` with the same ID and an `applied` or `rejected` status. Clients
+may retry an unacknowledged mutation with the same ID; duplicate IDs are not
+applied twice.
+
+Votes may be changed while a round is still pending. The latest vote from each
+eligible player replaces their previous vote. Once the round resolves, votes
+are final. Only the player whose answer produced a round result may continue
+past that result; other players wait for the resulting snapshot.
+
 Ready:
 
 ```json
 {
-  "type": "ready",
+  "type": "set_ready",
+  "commandId": "stable-command-id",
   "roomCode": "ABCD12",
   "playerId": "uuid",
   "payload": {

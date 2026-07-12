@@ -12,6 +12,7 @@ from app.models.player import Player
 
 class RoomStatus(str, Enum):
     WAITING = "waiting"
+    STARTING = "starting"
     PLAYING = "playing"
     FINISHED = "finished"
 
@@ -21,6 +22,9 @@ class Room(BaseModel):
 
     room_code: str = Field(min_length=1, max_length=6, alias="roomCode")
     host_player_id: str = Field(alias="hostPlayerId")
+    host_epoch: int = Field(default=0, ge=0, alias="hostEpoch")
+    version: int = Field(default=0, ge=0)
+    processed_command_ids: list[str] = Field(default_factory=list, exclude=True)
     players: list[Player] = Field(default_factory=list)
     status: RoomStatus = RoomStatus.WAITING
     max_players: int = Field(ge=2, le=8, strict=True, alias="maxPlayers")

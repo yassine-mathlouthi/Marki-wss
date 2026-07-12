@@ -23,6 +23,10 @@ class RoomStore(ABC):
     def delete(self, room_code: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def list_rooms(self) -> list[Room]:
+        raise NotImplementedError
+
 
 class RoomEventBus(ABC):
     @abstractmethod

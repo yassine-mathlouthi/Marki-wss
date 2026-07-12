@@ -147,6 +147,8 @@ class RoomSnapshot(BaseModel):
 
     room_code: str = Field(alias="roomCode")
     host_player_id: str = Field(alias="hostPlayerId")
+    host_epoch: int = Field(alias="hostEpoch")
+    version: int
     status: str
     max_players: int = Field(alias="maxPlayers")
     current_turn_player_id: str | None = Field(default=None, alias="currentTurnPlayerId")

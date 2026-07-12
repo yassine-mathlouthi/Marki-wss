@@ -89,6 +89,19 @@ class GameServiceTest(unittest.TestCase):
         self.assertIsNone(room.game.last_round)
         self.assertEqual(room.current_turn_player_id, "p2")
 
+    def test_vote_can_change_until_round_resolves(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+
+        room, result = self.service.cast_vote(room, "p2", VoteChoice.CORRECT)
+        self.assertIsNone(result)
+        room, result = self.service.cast_vote(room, "p2", VoteChoice.WRONG)
+
+        self.assertIsNone(result)
+        self.assertEqual(len(room.game.pending_round.votes), 1)
+        self.assertEqual(room.game.pending_round.votes[0].choice, VoteChoice.WRONG)
+
     def test_pass_turn_draws_one_and_advances_after_result(self) -> None:
         player_one = Player(playerId="p1", name="A", hand=[card("a1")])
         player_two = Player(playerId="p2", name="B", hand=[card("b1")])
@@ -185,6 +198,226 @@ class GameServiceTest(unittest.TestCase):
         self.assertIsNotNone(room)
         self.assertEqual(room.status, RoomStatus.PLAYING)
         self.assertEqual(room.game.pending_round.votes, [])
+
+    def test_disconnected_voter_remains_required_during_grace(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room.players[2].is_connected = False
+
+        room, result = self.service.cast_vote(room, "p2", VoteChoice.CORRECT)
+
+        self.assertIsNone(result)
+        self.assertIsNotNone(room.game.pending_round)
+
+    def test_expired_disconnected_voter_is_excluded_and_round_resolves(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room, result = self.service.cast_vote(room, "p2", VoteChoice.CORRECT)
+        self.assertIsNone(result)
+        room.players[2].voting_excluded = True
+
+        room, result = self.service.reconcile_pending_round(room)
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(room.game.pending_round)
+        self.assertEqual([vote.player_id for vote in result.votes], ["p2"])
+        self.assertTrue(result.accepted)
+
+    def test_disconnect_expiry_reconciles_only_the_matching_connection_epoch(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room.game.pending_round.votes = [
+            Vote(playerId="p2", choice=VoteChoice.CORRECT)
+        ]
+        room_service.save(room)
+        room = room_service.mark_connected(room.room_code, "p3", True)
+        epoch = room.players[2].connection_epoch
+        room_service.mark_connected(room.room_code, "p3", False)
+
+        room, result, expired, _ = room_service.expire_disconnected_player(
+            room.room_code, "p3", epoch
+        )
+
+        self.assertTrue(expired)
+        self.assertIsNotNone(result)
+        self.assertIsNone(room.game.pending_round)
+
+        reconnected = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        reconnected.players.append(
+            Player(playerId="p3", name="C", hand=[card("c1")])
+        )
+        reconnected.scores["p3"] = 0
+        room_service.save(reconnected)
+        reconnected = room_service.mark_connected("ABC123", "p3", True)
+
+        _, _, stale_expired, _ = room_service.expire_disconnected_player(
+            "ABC123", "p3", reconnected.players[2].connection_epoch - 1
+        )
+
+        self.assertFalse(stale_expired)
+        self.assertFalse(reconnected.players[2].voting_excluded)
+
+    def test_reconciliation_removes_votes_from_ineligible_players(self) -> None:
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room.game.pending_round.votes = [
+            Vote(playerId="p2", choice=VoteChoice.CORRECT),
+            Vote(playerId="p3", choice=VoteChoice.WRONG),
+        ]
+        room.players[2].voting_excluded = True
+
+        room, result = self.service.reconcile_pending_round(room)
+
+        self.assertIsNotNone(result)
+        self.assertEqual([vote.player_id for vote in result.votes], ["p2"])
+        self.assertEqual(result.correct_votes, 1)
+        self.assertEqual(result.wrong_votes, 0)
+
+    def test_leaving_voter_resolves_for_all_remaining_eligible_voters(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room.game.pending_round.votes = [
+            Vote(playerId="p2", choice=VoteChoice.CORRECT)
+        ]
+        room_service.save(room)
+
+        room, result = room_service.leave_room_with_result("ABC123", "p3")
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(room.game.pending_round)
+        self.assertIsNotNone(room.game.last_round)
+
+    def test_host_leave_transfers_host_and_reconciles_vote(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players[0].is_host = True
+        room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
+        room.scores["p3"] = 0
+        room.game.pending_round.player_id = "p2"
+        room.game.pending_round.votes = [
+            Vote(playerId="p3", choice=VoteChoice.CORRECT)
+        ]
+        room_service.save(room)
+
+        room, result = room_service.leave_room_with_result("ABC123", "p1")
+
+        self.assertEqual(room.host_player_id, "p2")
+        self.assertTrue(room.players[0].is_host)
+        self.assertIsNotNone(result)
+        self.assertIsNone(room.game.pending_round)
+
+    def test_expired_host_transfers_to_first_connected_player_in_all_states(self) -> None:
+        for room_status in (
+            RoomStatus.WAITING,
+            RoomStatus.PLAYING,
+            RoomStatus.FINISHED,
+        ):
+            with self.subTest(room_status=room_status):
+                store = InMemoryRoomStore()
+                room_service = RoomService(store, self.service)
+                room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+                room.status = room_status
+                room.players[0].is_host = True
+                room.players[1].is_connected = True
+                room.players.append(
+                    Player(
+                        playerId="p3",
+                        name="C",
+                        hand=[card("c1")],
+                        isConnected=True,
+                    )
+                )
+                room.scores["p3"] = 0
+                room_service.save(room)
+                room = room_service.mark_connected("ABC123", "p1", True)
+                host_epoch = room.players[0].connection_epoch
+                room_service.mark_connected("ABC123", "p1", False)
+
+                room, _, expired, transferred = (
+                    room_service.expire_disconnected_player(
+                        "ABC123", "p1", host_epoch
+                    )
+                )
+
+                self.assertTrue(expired)
+                self.assertTrue(transferred)
+                self.assertEqual(room.host_player_id, "p2")
+                self.assertEqual(room.host_epoch, 1)
+                self.assertFalse(room.players[0].is_host)
+                self.assertTrue(room.players[1].is_host)
+                self.assertEqual(room.status, room_status)
+
+    def test_late_host_reconnect_does_not_reclaim_host(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players[0].is_host = True
+        room.players[1].is_connected = True
+        room_service.save(room)
+        room = room_service.mark_connected("ABC123", "p1", True)
+        connection_epoch = room.players[0].connection_epoch
+        room_service.mark_connected("ABC123", "p1", False)
+        room_service.expire_disconnected_player(
+            "ABC123", "p1", connection_epoch
+        )
+
+        room = room_service.mark_connected("ABC123", "p1", True)
+
+        self.assertEqual(room.host_player_id, "p2")
+        self.assertEqual(room.host_epoch, 1)
+        self.assertFalse(room.players[0].is_host)
+
+    def test_first_reconnect_becomes_host_when_no_candidate_was_connected(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players[0].is_host = True
+        room_service.save(room)
+        room = room_service.mark_connected("ABC123", "p1", True)
+        connection_epoch = room.players[0].connection_epoch
+        room_service.mark_connected("ABC123", "p1", False)
+
+        room, _, _, transferred = room_service.expire_disconnected_player(
+            "ABC123", "p1", connection_epoch
+        )
+        self.assertFalse(transferred)
+
+        room = room_service.mark_connected("ABC123", "p2", True)
+
+        self.assertEqual(room.host_player_id, "p2")
+        self.assertEqual(room.host_epoch, 1)
+
+    def test_replay_preserves_transferred_host(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.status = RoomStatus.FINISHED
+        room.players[0].is_host = True
+        room.players[1].is_connected = True
+        room_service.save(room)
+        room = room_service.mark_connected("ABC123", "p1", True)
+        connection_epoch = room.players[0].connection_epoch
+        room_service.mark_connected("ABC123", "p1", False)
+        room, _, _, _ = room_service.expire_disconnected_player(
+            "ABC123", "p1", connection_epoch
+        )
+
+        room = self.service.reset_game(room)
+
+        self.assertEqual(room.status, RoomStatus.WAITING)
+        self.assertEqual(room.host_player_id, "p2")
+        self.assertTrue(room.players[1].is_host)
+        self.assertEqual(room.host_epoch, 1)
 
     def test_leaving_pending_round_owner_clears_round(self) -> None:
         room_service = RoomService(InMemoryRoomStore())
