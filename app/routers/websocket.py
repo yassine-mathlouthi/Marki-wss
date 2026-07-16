@@ -330,7 +330,7 @@ def get_websocket_router(
                         if event_type == "leave_room":
                             connection_manager.disconnect(room.room_code, player_id, websocket)
                             await websocket.close(code=status.WS_1000_NORMAL_CLOSURE, reason="Left room.")
-                            continue
+                            return
                         if not executed:
                             continue
                     else:
@@ -403,17 +403,20 @@ def get_websocket_router(
             disconnected_active_socket = registered and connection_manager.disconnect(
                 room.room_code, player_id, websocket
             )
-            if not disconnected_active_socket:
-                return
-            try:
-                if not room_service.player_in_room(room.room_code, player_id):
-                    return
-                room = await mark_disconnected(room.room_code, player_id)
-            except HTTPException:
-                return
-            await _broadcast_presence(
-                connection_manager, room_service, room, "player_disconnected", player_id, mark_disconnected
-            )
+            if disconnected_active_socket:
+                try:
+                    if room_service.player_in_room(room.room_code, player_id):
+                        room = await mark_disconnected(room.room_code, player_id)
+                        await _broadcast_presence(
+                            connection_manager,
+                            room_service,
+                            room,
+                            "player_disconnected",
+                            player_id,
+                            mark_disconnected,
+                        )
+                except HTTPException:
+                    pass
 
     setattr(router, "cleanup_deleted_rooms", cleanup_deleted_rooms)
     return router

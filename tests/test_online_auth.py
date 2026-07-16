@@ -186,6 +186,28 @@ class OnlineAuthenticationTest(unittest.TestCase):
         self.assertEqual(event["type"], "room_snapshot")
         self.assertEqual(event["playerId"], host["playerId"])
 
+    def test_websocket_leave_closes_without_reading_closed_socket(self) -> None:
+        host = self._create_room()
+
+        with self.client.websocket_connect(
+            f'/ws/{host["roomCode"]}/{host["playerId"]}'
+        ) as websocket:
+            websocket.send_json(
+                {"type": "authenticate", "sessionToken": host["sessionToken"]}
+            )
+            websocket.receive_json()
+            websocket.receive_json()
+
+            websocket.send_json({"type": "leave_room", "commandId": "leave-1"})
+            ack = websocket.receive_json()
+
+            self.assertEqual(ack["type"], "command_result")
+            self.assertEqual(ack["payload"]["commandType"], "leave_room")
+            with self.assertRaises(WebSocketDisconnect) as raised:
+                websocket.receive_json()
+
+        self.assertEqual(raised.exception.code, 1000)
+
     def test_malformed_json_returns_stable_error_and_socket_stays_usable(self) -> None:
         host = self._create_room()
 
