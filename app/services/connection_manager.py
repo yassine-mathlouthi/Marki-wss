@@ -1,18 +1,42 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from collections import defaultdict
-from typing import DefaultDict
+from typing import Any, DefaultDict
 
 from fastapi import WebSocket
 
 from app.models.events import GameEvent
 
+_KNOWN_EVENT_TYPES = {
+    "command_result",
+    "error",
+    "game_snapshot",
+    "game_starting",
+    "host_transferred",
+    "player_connected",
+    "player_disconnected",
+    "player_disconnect_expired",
+    "player_joined",
+    "player_left",
+    "pong",
+    "room_snapshot",
+    "round_resolved",
+}
+
 
 class ConnectionManager:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        send_timeout_seconds: float = 2.0,
+        operational_controls: Any | None = None,
+    ) -> None:
         # TODO: For multi-instance production, move active connection metadata to Redis
         # and broadcast room events through Redis pub/sub so all instances stay in sync.
         self._connections: DefaultDict[str, dict[str, WebSocket]] = defaultdict(dict)
+        self._send_timeout_seconds = send_timeout_seconds
+        self._operational_controls = operational_controls
 
     async def connect(
         self,
@@ -98,8 +122,32 @@ class ConnectionManager:
             self.disconnect(room_code, player_id, websocket)
 
     async def _safe_send(self, websocket: WebSocket, event: GameEvent) -> bool:
+        payload = event.model_dump(mode="json", by_alias=True)
+        event_type = self._metric_event_type(str(payload.get("type", "unknown")))
         try:
-            await websocket.send_json(event.model_dump(mode="json", by_alias=True))
+            await asyncio.wait_for(
+                websocket.send_json(payload),
+                timeout=self._send_timeout_seconds,
+            )
+            self._increment("websocket_messages", event_type)
+            self._add(
+                "websocket_message_bytes",
+                event_type,
+                len(json.dumps(payload, separators=(",", ":")).encode("utf-8")),
+            )
             return True
         except Exception:
+            self._increment("websocket_send_failures", event_type)
             return False
+
+    def _increment(self, metric: str, category: str) -> None:
+        if self._operational_controls is not None:
+            self._operational_controls.increment(metric, category)
+
+    def _add(self, metric: str, category: str, value: int) -> None:
+        if self._operational_controls is not None:
+            self._operational_controls.add(metric, category, value)
+
+    @staticmethod
+    def _metric_event_type(event_type: str) -> str:
+        return event_type if event_type in _KNOWN_EVENT_TYPES else "other"

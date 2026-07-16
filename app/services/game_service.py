@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
@@ -15,10 +17,17 @@ MAX_REQUIRED_DECK_SIZE = (8 * 14) + 2 + (8 * 3)
 
 
 class GameService:
-    def __init__(self, settings: Settings, randomizer: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        randomizer: random.Random | None = None,
+        operational_controls: Any | None = None,
+    ) -> None:
         self._settings = settings
         self._random = randomizer or random.Random()
         self._fallback_cards = self._load_fallback_cards()
+        self._operational_controls = operational_controls
+        self._remote_cards_cache: dict[str, tuple[float, list[GameCard]]] = {}
 
     @property
     def disconnect_grace_seconds(self) -> float:
@@ -26,12 +35,23 @@ class GameService:
 
     async def load_cards(self, region_id: str) -> list[GameCard]:
         if self._settings.cards_api_base_url:
+            cached_cards = self._cached_remote_cards(region_id)
+            if cached_cards is not None:
+                self._increment("cards_api", "cache_hit")
+                return cached_cards
             try:
                 remote_cards = await self._load_remote_cards(region_id)
             except httpx.HTTPError:
+                self._increment("cards_api", "error")
                 remote_cards = []
             if len(remote_cards) >= 2:
+                self._remote_cards_cache[region_id] = (
+                    time.monotonic(),
+                    [card.model_copy(deep=True) for card in remote_cards],
+                )
+                self._increment("cards_api", "success")
                 return remote_cards
+            self._increment("cards_api", "fallback")
         if region_id == "world":
             return [card.model_copy(deep=True) for card in self._fallback_cards]
         region_cards = [
@@ -197,6 +217,26 @@ class GameService:
             room.status = RoomStatus.FINISHED
         return room, result
 
+    def reconcile_disconnected_player(self, room: Room, player_id: str) -> tuple[Room, RoundResult | None]:
+        if room.status != RoomStatus.PLAYING:
+            return room, None
+
+        if room.game.last_round is not None and room.game.last_round.player_id == player_id:
+            room = self.continue_round_result(room)
+            return room, None
+
+        if room.game.last_pass is not None and room.game.last_pass.player_id == player_id:
+            room = self.continue_pass_result(room)
+            return room, None
+
+        room, result = self.reconcile_pending_round(room)
+        if result is not None:
+            return room, result
+
+        if room.current_turn_player_id == player_id and room.game.pending_round is None:
+            self._advance_turn(room)
+        return room, None
+
     def pass_turn(self, room: Room, player_id: str) -> Room:
         player = self._player_by_id(room, player_id)
         drawn_cards = self._draw_unlimited_cards(room, 1)
@@ -226,7 +266,11 @@ class GameService:
         return room
 
     def _advance_turn(self, room: Room) -> None:
-        player_ids = [player.player_id for player in room.players]
+        player_ids = [
+            player.player_id
+            for player in room.players
+            if not player.voting_excluded
+        ] or [player.player_id for player in room.players]
         if not player_ids:
             room.current_turn_player_id = None
             return
@@ -298,6 +342,23 @@ class GameService:
         if not isinstance(payload, list):
             return []
         return [GameCard.model_validate(item) for item in payload]
+
+    def _cached_remote_cards(self, region_id: str) -> list[GameCard] | None:
+        ttl = self._settings.cards_cache_ttl_seconds
+        if ttl <= 0:
+            return None
+        cached = self._remote_cards_cache.get(region_id)
+        if cached is None:
+            return None
+        cached_at, cards = cached
+        if time.monotonic() - cached_at > ttl:
+            self._remote_cards_cache.pop(region_id, None)
+            return None
+        return [card.model_copy(deep=True) for card in cards]
+
+    def _increment(self, metric: str, category: str) -> None:
+        if self._operational_controls is not None:
+            self._operational_controls.increment(metric, category)
 
     def _load_fallback_cards(self) -> list[GameCard]:
         root = Path(__file__).resolve().parents[3]

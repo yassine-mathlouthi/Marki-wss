@@ -73,6 +73,11 @@ def get_websocket_router(
     def room_lock(room_code: str) -> asyncio.Lock:
         return room_locks.setdefault(room_code, asyncio.Lock())
 
+    def cleanup_deleted_rooms(active_room_codes: set[str]) -> None:
+        for room_code in list(room_locks):
+            if room_code not in active_room_codes:
+                room_locks.pop(room_code, None)
+
     def cancel_grace(room_code: str, player_id: str) -> None:
         task = grace_tasks.pop((room_code, player_id), None)
         if task is not None:
@@ -100,6 +105,7 @@ def get_websocket_router(
                     room,
                     "host_transferred",
                     room.host_player_id,
+                    mark_disconnected,
                 )
             elif result is not None:
                 await _broadcast_round_resolved(
@@ -107,6 +113,7 @@ def get_websocket_router(
                     room_service,
                     room,
                     player_id,
+                    mark_disconnected,
                 )
             else:
                 await _broadcast_snapshot(
@@ -115,6 +122,7 @@ def get_websocket_router(
                     room,
                     "player_disconnect_expired",
                     player_id,
+                    mark_disconnected,
                 )
         except (asyncio.CancelledError, HTTPException):
             return
@@ -123,19 +131,22 @@ def get_websocket_router(
             if current is asyncio.current_task():
                 grace_tasks.pop((room_code, player_id), None)
 
+    async def mark_disconnected_locked(room_code: str, player_id: str) -> Any:
+        room = room_service.mark_connected(room_code, player_id, False)
+        player = room_service.get_player(room, player_id)
+        cancel_grace(room_code, player_id)
+        grace_tasks[(room_code, player_id)] = asyncio.create_task(
+            expire_disconnected_player(
+                room_code,
+                player_id,
+                player.connection_epoch,
+            )
+        )
+        return room
+
     async def mark_disconnected(room_code: str, player_id: str) -> Any:
         async with room_lock(room_code):
-            room = room_service.mark_connected(room_code, player_id, False)
-            player = room_service.get_player(room, player_id)
-            cancel_grace(room_code, player_id)
-            grace_tasks[(room_code, player_id)] = asyncio.create_task(
-                expire_disconnected_player(
-                    room_code,
-                    player_id,
-                    player.connection_epoch,
-                )
-            )
-            return room
+            return await mark_disconnected_locked(room_code, player_id)
 
     @router.websocket("/ws/{room_code}/{player_id}")
     async def websocket_endpoint(
@@ -296,7 +307,7 @@ def get_websocket_router(
                                 connection_manager=connection_manager,
                                 game_service=game_service,
                                 cancel_grace=cancel_grace,
-                                mark_disconnected=mark_disconnected,
+                                mark_disconnected=mark_disconnected_locked,
                                 correlation_id=correlation_id,
                             )
 
@@ -404,6 +415,7 @@ def get_websocket_router(
                 connection_manager, room_service, room, "player_disconnected", player_id, mark_disconnected
             )
 
+    setattr(router, "cleanup_deleted_rooms", cleanup_deleted_rooms)
     return router
 
 
@@ -424,7 +436,14 @@ async def _handle_event(
     if event_type == "set_ready":
         ready = bool(payload.get("ready", False))
         room = room_service.set_ready(room.room_code, player_id, ready)
-        await _broadcast_snapshot(connection_manager, room_service, room, "room_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "room_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "update_lobby_settings":
@@ -438,7 +457,14 @@ async def _handle_event(
             wrong_answer_behavior=settings_payload.wrong_answer_behavior,
             max_players=settings_payload.max_players,
         )
-        await _broadcast_snapshot(connection_manager, room_service, room, "room_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "room_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "start_game":
@@ -457,15 +483,31 @@ async def _handle_event(
             room,
             "game_starting",
             player_id,
+            mark_disconnected,
         )
         try:
             room = await game_service.start_game(room)
         except Exception:
             room.status = RoomStatus.WAITING
-            room_service.save(room)
+            room = room_service.save(room)
+            await _broadcast_snapshot(
+                connection_manager,
+                room_service,
+                room,
+                "room_snapshot",
+                player_id,
+                mark_disconnected,
+            )
             raise
         room = room_service.save(room)
-        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "game_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "replay_game":
@@ -474,7 +516,14 @@ async def _handle_event(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game has not finished.")
         room = game_service.reset_game(room)
         room = room_service.save(room)
-        await _broadcast_snapshot(connection_manager, room_service, room, "room_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "room_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "submit_answer":
@@ -495,7 +544,14 @@ async def _handle_event(
             answer=answer_payload.answer,
         )
         room = room_service.save(room)
-        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "game_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "pass_turn":
@@ -509,7 +565,14 @@ async def _handle_event(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
         room = game_service.pass_turn(room, player_id)
         room = room_service.save(room)
-        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "game_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "continue_pass_result":
@@ -519,7 +582,14 @@ async def _handle_event(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the passing player can resolve this draw.")
         room = game_service.continue_pass_result(room)
         room = room_service.save(room)
-        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "game_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "cast_vote":
@@ -533,7 +603,13 @@ async def _handle_event(
         room, result = game_service.cast_vote(room, player_id, vote_payload.choice)
         room = room_service.save(room)
         if result is not None:
-            await _broadcast_round_resolved(connection_manager, room_service, room, player_id)
+            await _broadcast_round_resolved(
+                connection_manager,
+                room_service,
+                room,
+                player_id,
+                mark_disconnected,
+            )
         else:
             await _broadcast_snapshot(
                 connection_manager,
@@ -541,6 +617,7 @@ async def _handle_event(
                 room,
                 "game_snapshot",
                 player_id,
+                mark_disconnected,
             )
         return
 
@@ -553,7 +630,14 @@ async def _handle_event(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "not_result_owner"})
         room = game_service.continue_round_result(room)
         room = room_service.save(room)
-        await _broadcast_snapshot(connection_manager, room_service, room, "game_snapshot", player_id)
+        await _broadcast_snapshot(
+            connection_manager,
+            room_service,
+            room,
+            "game_snapshot",
+            player_id,
+            mark_disconnected,
+        )
         return
 
     if event_type == "leave_room":
@@ -563,7 +647,13 @@ async def _handle_event(
         )
         if updated_room is not None:
             if result is not None:
-                await _broadcast_round_resolved(connection_manager, room_service, updated_room, player_id)
+                await _broadcast_round_resolved(
+                    connection_manager,
+                    room_service,
+                    updated_room,
+                    player_id,
+                    mark_disconnected,
+                )
             else:
                 await _broadcast_snapshot(
                     connection_manager,
@@ -571,6 +661,7 @@ async def _handle_event(
                     updated_room,
                     "player_left",
                     player_id,
+                    mark_disconnected,
                 )
         return
 
@@ -685,7 +776,7 @@ async def _send_command_result(
         "status": "applied",
         "replayed": replayed,
     }
-    if command_type != "leave_room":
+    if replayed and command_type != "leave_room":
         payload["snapshot"] = room_service.build_snapshot(room, player_id).model_dump(mode="json", by_alias=True)
     return await connection_manager.send_to_player(
         room.room_code,
@@ -727,9 +818,11 @@ async def _broadcast_round_resolved(
     room_service: RoomService,
     room,
     actor_player_id: str,
+    mark_disconnected: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> None:
+    stale_player_ids: list[str] = []
     for player in room.players:
-        await connection_manager.send_to_player(
+        sent = await connection_manager.send_to_player(
             room.room_code,
             player.player_id,
             GameEvent(
@@ -742,6 +835,29 @@ async def _broadcast_round_resolved(
                 },
             ),
         )
+        if not sent and player.is_connected:
+            stale_player_ids.append(player.player_id)
+
+    if not stale_player_ids:
+        return
+
+    for player_id in stale_player_ids:
+        room = (
+            await mark_disconnected(room.room_code, player_id)
+            if mark_disconnected is not None
+            else room_service.mark_connected(room.room_code, player_id, False)
+        )
+
+    for player in room.players:
+        if player.player_id not in stale_player_ids:
+            await _send_snapshot(
+                connection_manager,
+                room_service,
+                room,
+                player.player_id,
+                "player_disconnected",
+                actor_player_id,
+            )
 
 
 async def _send_error(

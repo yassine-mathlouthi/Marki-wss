@@ -54,6 +54,15 @@ class OperationalControls:
         for principal in [key for key in self._sockets if key[0] == room_code]:
             self._sockets.pop(principal, None)
 
+    def prune_expired_buckets(self) -> None:
+        now = self._clock()
+        for key, bucket in list(self._events.items()):
+            window_seconds = self._window_seconds_for(key[0])
+            while bucket and now - bucket[0] >= window_seconds:
+                bucket.popleft()
+            if not bucket:
+                self._events.pop(key, None)
+
     def admit_socket(
         self,
         client_ip: str,
@@ -95,6 +104,9 @@ class OperationalControls:
     def increment(self, metric: str, category: str = "total") -> None:
         self._counters[(metric, category)] += 1
 
+    def add(self, metric: str, category: str, value: int) -> None:
+        self._counters[(metric, category)] += value
+
     @property
     def active_socket_count(self) -> int:
         return len(self._sockets)
@@ -127,3 +139,8 @@ class OperationalControls:
                 detail={"code": error_code},
             )
         bucket.append(now)
+
+    def _window_seconds_for(self, action: str) -> float:
+        if action == "ws_event":
+            return self.settings.ws_event_rate_window_seconds
+        return self.settings.room_rate_window_seconds

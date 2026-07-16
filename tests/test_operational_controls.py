@@ -84,12 +84,26 @@ class OperationalControlsTest(unittest.TestCase):
 
     def test_metrics_have_bounded_non_sensitive_labels(self) -> None:
         self.controls.increment("socket_errors", "invalid_json")
+        self.controls.add("websocket_message_bytes", "room_snapshot", 123)
         output = self.controls.render_metrics(active_rooms=3)
 
         self.assertIn("marki_rooms_active 3", output)
         self.assertIn("marki_socket_errors_total", output)
+        self.assertIn("marki_websocket_message_bytes_total", output)
         self.assertNotIn("client", output)
         self.assertNotIn("ROOM", output)
+
+    def test_expired_rate_buckets_are_pruned(self) -> None:
+        self.controls.check_http_rate("create", "client")
+        self.controls.check_event_rate("ABC123", "p1")
+
+        self.now = 11
+        self.controls.prune_expired_buckets()
+
+        output = self.controls.render_metrics(active_rooms=0)
+        self.assertIn("marki_rooms_active 0", output)
+        self.controls.check_http_rate("create", "client")
+        self.controls.check_event_rate("ABC123", "p1")
 
 
 if __name__ == "__main__":

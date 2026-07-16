@@ -262,6 +262,69 @@ class GameServiceTest(unittest.TestCase):
         self.assertFalse(stale_expired)
         self.assertFalse(reconnected.players[2].voting_excluded)
 
+    def test_expired_current_turn_player_no_longer_blocks_play(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.game.pending_round = None
+        room.current_turn_player_id = "p1"
+        room.players[1].is_connected = True
+        room_service.save(room)
+        room = room_service.mark_connected("ABC123", "p1", True)
+        connection_epoch = room.players[0].connection_epoch
+        room_service.mark_connected("ABC123", "p1", False)
+
+        room, result, expired, _ = room_service.expire_disconnected_player(
+            "ABC123", "p1", connection_epoch
+        )
+
+        self.assertTrue(expired)
+        self.assertIsNone(result)
+        self.assertEqual(room.current_turn_player_id, "p2")
+
+    def test_expired_round_result_owner_no_longer_blocks_play(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.players[1].is_connected = True
+        room, result = self.service.cast_vote(room, "p2", VoteChoice.CORRECT)
+        self.assertIsNotNone(result)
+        room_service.save(room)
+        room = room_service.mark_connected("ABC123", "p1", True)
+        connection_epoch = room.players[0].connection_epoch
+        room_service.mark_connected("ABC123", "p1", False)
+
+        room, result, expired, _ = room_service.expire_disconnected_player(
+            "ABC123", "p1", connection_epoch
+        )
+
+        self.assertTrue(expired)
+        self.assertIsNone(result)
+        self.assertIsNone(room.game.last_round)
+        self.assertEqual(room.current_turn_player_id, "p2")
+
+    def test_expired_pass_result_owner_no_longer_blocks_play(self) -> None:
+        store = InMemoryRoomStore()
+        room_service = RoomService(store, self.service)
+        room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
+        room.game.pending_round = None
+        room.current_turn_player_id = "p1"
+        room.players[1].is_connected = True
+        room = self.service.pass_turn(room, "p1")
+        room_service.save(room)
+        room = room_service.mark_connected("ABC123", "p1", True)
+        connection_epoch = room.players[0].connection_epoch
+        room_service.mark_connected("ABC123", "p1", False)
+
+        room, result, expired, _ = room_service.expire_disconnected_player(
+            "ABC123", "p1", connection_epoch
+        )
+
+        self.assertTrue(expired)
+        self.assertIsNone(result)
+        self.assertIsNone(room.game.last_pass)
+        self.assertEqual(room.current_turn_player_id, "p2")
+
     def test_reconciliation_removes_votes_from_ineligible_players(self) -> None:
         room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)
         room.players.append(Player(playerId="p3", name="C", hand=[card("c1")]))
@@ -441,6 +504,28 @@ class GameServiceTest(unittest.TestCase):
         cards = asyncio.run(self.service.load_cards("europe"))
 
         self.assertEqual(cards, [])
+
+    def test_remote_cards_are_cached_and_returned_as_copies(self) -> None:
+        class CachedGameService(GameService):
+            def __init__(self) -> None:
+                settings = Settings()
+                settings.cards_api_base_url = "https://cards.example"
+                settings.cards_cache_ttl_seconds = 300
+                super().__init__(settings)
+                self.calls = 0
+
+            async def _load_remote_cards(self, region_id: str):
+                self.calls += 1
+                return [card(f"{region_id}-1"), card(f"{region_id}-2")]
+
+        service = CachedGameService()
+
+        first = asyncio.run(service.load_cards("world"))
+        first[0].names["en"] = "mutated"
+        second = asyncio.run(service.load_cards("world"))
+
+        self.assertEqual(service.calls, 1)
+        self.assertEqual(second[0].names["en"], "world-1")
 
     def test_reset_game_returns_finished_room_to_a_ready_lobby(self) -> None:
         room = room_with_round(WrongAnswerBehavior.DISCARD_CARD)

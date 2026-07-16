@@ -22,12 +22,15 @@ from app.services.operational_controls import OperationalControls
 load_dotenv()
 
 settings = get_settings()
-connection_manager = ConnectionManager()
+operational_controls = OperationalControls(settings)
+connection_manager = ConnectionManager(
+    settings.ws_send_timeout_seconds,
+    operational_controls=operational_controls,
+)
 room_store = InMemoryRoomStore()
 room_event_bus = InMemoryRoomEventBus(connection_manager)
-game_service = GameService(settings)
+game_service = GameService(settings, operational_controls=operational_controls)
 room_service = RoomService(room_store, game_service)
-operational_controls = OperationalControls(settings)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,12 @@ async def _cleanup_rooms() -> None:
             for room_code in expired:
                 operational_controls.remove_room(room_code)
                 operational_controls.increment("rooms_expired")
+            operational_controls.prune_expired_buckets()
+            cleanup_deleted_rooms = getattr(websocket_router, "cleanup_deleted_rooms", None)
+            if cleanup_deleted_rooms is not None:
+                cleanup_deleted_rooms(
+                    {room.room_code for room in room_store.list_rooms()}
+                )
         except Exception:
             logger.exception("Room cleanup failed")
 
@@ -81,11 +90,10 @@ async def metrics() -> str:
 app.include_router(
     get_rooms_router(room_service, connection_manager, operational_controls)
 )
-app.include_router(
-    get_websocket_router(
-        room_service,
-        connection_manager,
-        game_service,
-        operational_controls,
-    )
+websocket_router = get_websocket_router(
+    room_service,
+    connection_manager,
+    game_service,
+    operational_controls,
 )
+app.include_router(websocket_router)

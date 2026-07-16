@@ -184,7 +184,7 @@ class RoomService:
         self._remove_player_from_game(room, player.player_id)
         result = None
         if self._game_service is not None:
-            room, result = self._game_service.reconcile_pending_round(room)
+            room, result = self._game_service.reconcile_disconnected_player(room, player_id)
         room.current_turn_player_id = self._resolve_current_turn(room)
         self._touch(room)
         self._store.save(room)
@@ -233,7 +233,7 @@ class RoomService:
                 host_transferred = True
         result = None
         if self._game_service is not None:
-            room, result = self._game_service.reconcile_pending_round(room)
+            room, result = self._game_service.reconcile_disconnected_player(room, player_id)
         self._touch(room)
         self._store.save(room)
         return room, result, True, host_transferred

@@ -150,8 +150,9 @@ async def _broadcast_snapshot(
     event_type: str,
     actor_player_id: str,
 ) -> None:
+    stale_player_ids: list[str] = []
     for player in room.players:
-        await connection_manager.send_to_player(
+        sent = await connection_manager.send_to_player(
             room.room_code,
             player.player_id,
             GameEvent(
@@ -161,3 +162,24 @@ async def _broadcast_snapshot(
                 payload={"snapshot": room_service.build_snapshot(room, player.player_id).model_dump(mode="json", by_alias=True)},
             ),
         )
+        if not sent and player.is_connected:
+            stale_player_ids.append(player.player_id)
+
+    if not stale_player_ids:
+        return
+
+    for player_id in stale_player_ids:
+        room = room_service.mark_connected(room.room_code, player_id, False)
+
+    for player in room.players:
+        if player.player_id not in stale_player_ids:
+            await connection_manager.send_to_player(
+                room.room_code,
+                player.player_id,
+                GameEvent(
+                    type="player_disconnected",
+                    roomCode=room.room_code,
+                    playerId=actor_player_id,
+                    payload={"snapshot": room_service.build_snapshot(room, player.player_id).model_dump(mode="json", by_alias=True)},
+                ),
+            )

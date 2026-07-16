@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.models.events import GameEvent
 from app.routers.rooms import get_rooms_router
 from app.routers.websocket import get_websocket_router
 from app.services.connection_manager import ConnectionManager
@@ -257,6 +258,31 @@ class OnlineAuthenticationTest(unittest.TestCase):
             self.connection_manager.disconnect("ABC123", "p1", new_socket)
         )
 
+    def test_send_timeout_removes_stale_socket(self) -> None:
+        class SlowSocket:
+            async def send_json(self, _payload) -> None:
+                await asyncio.sleep(1)
+
+        async def scenario() -> None:
+            manager = ConnectionManager(send_timeout_seconds=0.01)
+            await manager.connect("ABC123", "p1", SlowSocket(), accept=False)
+
+            sent = await manager.send_to_player(
+                "ABC123",
+                "p1",
+                GameEvent(
+                    type="room_snapshot",
+                    roomCode="ABC123",
+                    playerId="p1",
+                    payload={},
+                ),
+            )
+
+            self.assertFalse(sent)
+            self.assertFalse(manager.disconnect("ABC123", "p1"))
+
+        asyncio.run(scenario())
+
     def test_unexpected_handler_failure_still_marks_player_disconnected(self) -> None:
         host = self._create_room()
 
@@ -304,6 +330,7 @@ class OnlineAuthenticationTest(unittest.TestCase):
             )
             websocket.receive_json()
             websocket.receive_json()
+            connected_version = self.room_service.get_room(host["roomCode"]).version
             for payload in invalid_payloads:
                 websocket.send_json(
                     {
@@ -318,6 +345,10 @@ class OnlineAuthenticationTest(unittest.TestCase):
                 self.assertEqual(event["type"], "command_result")
                 self.assertEqual(event["payload"]["status"], "rejected")
                 self.assertEqual(event["payload"]["code"], "invalid_payload")
+                self.assertEqual(
+                    self.room_service.get_room(host["roomCode"]).version,
+                    connected_version,
+                )
 
         room = self.room_service.get_room(host["roomCode"])
         self.assertEqual(room.settings.region_id, "tunisia")
@@ -352,6 +383,24 @@ class OnlineAuthenticationTest(unittest.TestCase):
                 }
             )
             event = websocket.receive_json()
+            acknowledgement = websocket.receive_json()
+
+            websocket.send_json(
+                {
+                    "type": "update_lobby_settings",
+                    "commandId": "valid-settings-update",
+                    "roomCode": host["roomCode"],
+                    "playerId": host["playerId"],
+                    "payload": {
+                        "regionId": "world",
+                        "cardsPerPlayer": 14,
+                        "language": "fr",
+                        "wrongAnswerBehavior": "returnToHand",
+                        "maxPlayers": 8,
+                    },
+                }
+            )
+            replay = websocket.receive_json()
 
         self.assertEqual(event["type"], "room_snapshot")
         snapshot = event["payload"]["snapshot"]
@@ -359,6 +408,15 @@ class OnlineAuthenticationTest(unittest.TestCase):
         self.assertEqual(snapshot["settings"]["cardsPerPlayer"], 14)
         self.assertEqual(snapshot["settings"]["language"], "fr")
         self.assertEqual(snapshot["maxPlayers"], 8)
+        self.assertEqual(acknowledgement["type"], "command_result")
+        self.assertEqual(acknowledgement["payload"]["status"], "applied")
+        self.assertFalse(acknowledgement["payload"]["replayed"])
+        self.assertNotIn("snapshot", acknowledgement["payload"])
+        self.assertEqual(replay["type"], "command_result")
+        self.assertTrue(replay["payload"]["replayed"])
+        self.assertEqual(
+            replay["payload"]["snapshot"]["version"], snapshot["version"]
+        )
 
 
 if __name__ == "__main__":
