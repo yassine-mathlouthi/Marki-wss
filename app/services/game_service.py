@@ -66,13 +66,13 @@ class GameService:
         if required_count > MAX_REQUIRED_DECK_SIZE:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Requested game size exceeds the supported limit.",
+                detail={"code": "game_size_too_large"},
             )
         cards = await self.load_cards(room.settings.region_id)
         if len(cards) < 2:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Not enough cards are available for this region.",
+                detail={"code": "cards_unavailable"},
             )
         deck = self._ensure_deck_size(cards, required_count)
         self._random.shuffle(deck)
@@ -136,12 +136,18 @@ class GameService:
     def cast_vote(self, room: Room, player_id: str, choice: VoteChoice) -> tuple[Room, RoundResult | None]:
         pending_round = room.game.pending_round
         if pending_round is None:
-            raise ValueError("No pending round.")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "no_pending_round"},
+            )
 
         self._player_by_id(room, player_id)
         eligible_voters = self.eligible_voter_ids(room)
         if player_id not in eligible_voters:
-            raise ValueError("Player is not eligible to vote in this round.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "not_eligible_to_vote"},
+            )
 
         votes = [vote for vote in pending_round.votes if vote.player_id != player_id]
         votes.append(Vote(playerId=player_id, choice=choice))

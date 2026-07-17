@@ -401,13 +401,14 @@ def get_websocket_router(
                         str(locals().get("event_type", "")), str(code),
                     )
                 except ValueError as exc:
-                    logger.info("WebSocket command invalid room=%s player=%s correlation=%s error=%s", room.room_code, player_id, correlation_id, exc)
+                    code = _game_value_error_code(exc)
+                    logger.info("WebSocket command invalid room=%s player=%s correlation=%s code=%s", room.room_code, player_id, correlation_id, code)
                     if operational_controls is not None:
-                        operational_controls.increment("command_rejections", "command_rejected")
+                        operational_controls.increment("command_rejections", code)
                     await _send_rejected_command_result(
                         websocket, room.room_code, player_id,
                         locals().get("command_id", correlation_id),
-                        str(locals().get("event_type", "")), "command_rejected",
+                        str(locals().get("event_type", "")), code,
                     )
         except WebSocketDisconnect:
             pass
@@ -502,12 +503,12 @@ async def _handle_event(
     if event_type == "start_game":
         room_service.require_host(room, player_id)
         if room.status != RoomStatus.WAITING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game already started.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_already_started"})
         room = room_service.remove_expired_lobby_players(room)
         if len(room.players) < 2:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="At least two players are required.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "not_enough_players"})
         if any(not player.is_connected or not player.is_ready for player in room.players):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="All active players must be connected and ready.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "players_not_ready"})
         room.status = RoomStatus.STARTING
         room = room_service.save(room)
         await _broadcast_snapshot(
@@ -546,7 +547,7 @@ async def _handle_event(
     if event_type == "replay_game":
         room_service.require_host(room, player_id)
         if room.status != RoomStatus.FINISHED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game has not finished.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_not_finished"})
         room = game_service.reset_game(room)
         room = room_service.save(room)
         await _broadcast_snapshot(
@@ -561,13 +562,13 @@ async def _handle_event(
 
     if event_type == "submit_answer":
         if room.status != RoomStatus.PLAYING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_not_active"})
         if room.game.last_round is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current result first.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "resolve_result_first"})
         if room.game.pending_round is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current round first.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "resolve_round_first"})
         if room.current_turn_player_id != player_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "not_your_turn"})
         answer_payload = SubmitAnswerPayload.model_validate(payload)
         room = game_service.submit_answer(
             room=room,
@@ -589,13 +590,13 @@ async def _handle_event(
 
     if event_type == "pass_turn":
         if room.status != RoomStatus.PLAYING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_not_active"})
         if room.game.last_round is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current result first.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "resolve_result_first"})
         if room.game.pending_round is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resolve the current round first.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "resolve_round_first"})
         if room.current_turn_player_id != player_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="It is not your turn.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "not_your_turn"})
         room = game_service.pass_turn(room, player_id)
         room = room_service.save(room)
         await _broadcast_snapshot(
@@ -610,9 +611,9 @@ async def _handle_event(
 
     if event_type == "continue_pass_result":
         if room.status != RoomStatus.PLAYING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_not_active"})
         if room.game.last_pass is not None and room.game.last_pass.player_id != player_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the passing player can resolve this draw.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "not_pass_owner"})
         room = game_service.continue_pass_result(room)
         room = room_service.save(room)
         await _broadcast_snapshot(
@@ -627,11 +628,11 @@ async def _handle_event(
 
     if event_type == "cast_vote":
         if room.status != RoomStatus.PLAYING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_not_active"})
         if room.game.pending_round is None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No pending round.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "no_pending_round"})
         if room.game.pending_round.player_id == player_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Round owner cannot vote.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "round_owner_cannot_vote"})
         vote_payload = CastVotePayload.model_validate(payload)
         room, result = game_service.cast_vote(room, player_id, vote_payload.choice)
         room = room_service.save(room)
@@ -656,7 +657,7 @@ async def _handle_event(
 
     if event_type == "continue_round_result":
         if room.status not in (RoomStatus.PLAYING, RoomStatus.FINISHED):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game is not active.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_not_active"})
         if room.game.last_round is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "no_round_result"})
         if room.game.last_round.player_id != player_id:
@@ -717,6 +718,17 @@ async def _handle_event(
         code="unsupported_event",
         correlation_id=correlation_id,
     )
+
+
+def _game_value_error_code(error: ValueError) -> str:
+    message = str(error).lower()
+    if "not in your hand" in message:
+        return "card_not_in_hand"
+    if "table card" in message:
+        return "table_card_not_found"
+    if "player not found" in message:
+        return "invalid_player_session"
+    return "command_rejected"
 
 
 async def _send_snapshot(

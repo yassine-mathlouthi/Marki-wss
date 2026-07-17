@@ -285,7 +285,7 @@ class RoomService:
     def set_ready(self, room_code: str, player_id: str, ready: bool) -> Room:
         room = self.get_room(room_code)
         if room.status != RoomStatus.WAITING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game already started.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "game_already_started"})
         player = self.get_player(room, player_id)
         player.is_ready = ready
         self._touch(room)
@@ -306,9 +306,9 @@ class RoomService:
         room = self.get_room(room_code)
         self.require_host(room, player_id)
         if room.status != RoomStatus.WAITING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot edit lobby after game start.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "lobby_edit_after_start"})
         if max_players is not None and max_players < len(room.players):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="maxPlayers is below joined players.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "max_players_below_joined"})
 
         settings_data = room.settings.model_dump()
         if region_id is not None:
@@ -409,7 +409,7 @@ class RoomService:
 
     def require_host(self, room: Room, player_id: str) -> None:
         if room.host_player_id != player_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the host can perform this action.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "not_host"})
 
     def get_player(self, room: Room, player_id: str) -> Player:
         for player in room.players:
