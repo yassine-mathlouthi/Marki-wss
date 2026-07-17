@@ -62,9 +62,6 @@ def get_rooms_router(
         client_ip = request.client.host if request.client else "unknown"
         if operational_controls is not None:
             operational_controls.check_http_rate("join", client_ip)
-            operational_controls.check_room_capacity(
-                client_ip, payload.room_code.upper()
-            )
         room, player, session_token, replayed = room_service.join_room_idempotent(
             idempotency_key=key,
             fingerprint=fingerprint,
@@ -72,7 +69,6 @@ def get_rooms_router(
             player_name=payload.player_name,
         )
         if operational_controls is not None and not replayed:
-            operational_controls.register_room(client_ip, room.room_code)
             operational_controls.increment("room_joins")
         if not replayed:
             await _broadcast_snapshot(connection_manager, room_service, room, event_type="player_joined", actor_player_id=player.player_id)
@@ -85,9 +81,36 @@ def get_rooms_router(
 
     @router.get("/{room_code}")
     async def get_room(room_code: str, authorization: str | None = Header(default=None)) -> dict:
-        room = room_service.get_room(room_code)
-        player = room_service.authenticate_session(room, _bearer_token(authorization))
-        return room_service.build_snapshot(room, viewer_player_id=player.player_id).model_dump(mode="json", by_alias=True)
+        try:
+            room = room_service.get_room(room_code)
+            player = room_service.authenticate_session(
+                room, _bearer_token(authorization)
+            )
+        except HTTPException as error:
+            if operational_controls is not None:
+                code = (
+                    str(error.detail.get("code", "invalid"))
+                    if isinstance(error.detail, dict)
+                    else "invalid"
+                )
+                category = (
+                    code
+                    if code in {
+                        "room_expired",
+                        "room_closed",
+                        "player_removed",
+                        "invalid_player_session",
+                        "room_not_found",
+                    }
+                    else "invalid"
+                )
+                operational_controls.increment("session_restoration", category)
+            raise
+        if operational_controls is not None:
+            operational_controls.increment("session_restoration", "valid")
+        return room_service.build_snapshot(
+            room, viewer_player_id=player.player_id
+        ).model_dump(mode="json", by_alias=True)
 
     @router.post("/{room_code}/leave")
     async def leave_room(
@@ -97,6 +120,8 @@ def get_rooms_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict:
         key = _idempotency_key(idempotency_key)
+        if operational_controls is not None:
+            operational_controls.increment("leave", "requested")
         try:
             existing_room = room_service.get_room(room_code)
             room_service.authenticate_player(existing_room, payload.player_id, _bearer_token(authorization))
@@ -105,7 +130,11 @@ def get_rooms_router(
                 key, room_code, payload.player_id, replay_only=True
             )
             if not replayed:
+                if operational_controls is not None:
+                    operational_controls.increment("leave", "failed")
                 raise
+            if operational_controls is not None:
+                operational_controls.increment("leave", "replayed")
             return {"status": "applied", "replayed": True}
         room, result, replayed = room_service.leave_room_idempotent(key, room_code, payload.player_id)
         connection_manager.disconnect(existing_room.room_code, payload.player_id)
@@ -116,6 +145,10 @@ def get_rooms_router(
                 room,
                 event_type="round_resolved" if result is not None else "player_left",
                 actor_player_id=payload.player_id,
+            )
+        if operational_controls is not None:
+            operational_controls.increment(
+                "leave", "replayed" if replayed else "applied"
             )
         return {"status": "applied", "replayed": replayed}
 

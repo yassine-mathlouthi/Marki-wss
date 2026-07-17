@@ -22,6 +22,7 @@ from app.services.operational_controls import OperationalControls
 load_dotenv()
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 operational_controls = OperationalControls(settings)
 connection_manager = ConnectionManager(
     settings.ws_send_timeout_seconds,
@@ -30,9 +31,20 @@ connection_manager = ConnectionManager(
 room_store = InMemoryRoomStore()
 room_event_bus = InMemoryRoomEventBus(connection_manager)
 game_service = GameService(settings, operational_controls=operational_controls)
-room_service = RoomService(room_store, game_service)
-
-logger = logging.getLogger(__name__)
+room_service = RoomService(
+    room_store,
+    game_service,
+    idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
+    waiting_room_ttl_seconds=settings.waiting_room_ttl_seconds,
+    playing_room_ttl_seconds=settings.playing_room_ttl_seconds,
+    finished_room_ttl_seconds=settings.finished_room_ttl_seconds,
+)
+room_service.add_room_deleted_listener(operational_controls.remove_room)
+room_service.add_room_deletion_observer(
+    lambda _room_code, reason, room_status: operational_controls.increment(
+        "room_deletions", f"{reason}_{room_status.value}"
+    )
+)
 
 
 async def _cleanup_rooms() -> None:
@@ -44,14 +56,15 @@ async def _cleanup_rooms() -> None:
                 ttl_seconds=settings.abandoned_room_ttl_seconds,
             )
             for room_code in expired:
-                operational_controls.remove_room(room_code)
                 operational_controls.increment("rooms_expired")
+            active_room_codes = {
+                room.room_code for room in room_store.list_rooms()
+            }
+            operational_controls.prune_stale_rooms(active_room_codes)
             operational_controls.prune_expired_buckets()
             cleanup_deleted_rooms = getattr(websocket_router, "cleanup_deleted_rooms", None)
             if cleanup_deleted_rooms is not None:
-                cleanup_deleted_rooms(
-                    {room.room_code for room in room_store.list_rooms()}
-                )
+                cleanup_deleted_rooms(active_room_codes)
         except Exception:
             logger.exception("Room cleanup failed")
 
@@ -84,7 +97,12 @@ async def health_check() -> dict[str, str]:
 
 @app.get("/metrics", response_class=PlainTextResponse)
 async def metrics() -> str:
-    return operational_controls.render_metrics(room_service.active_room_count())
+    connected, disconnected_retained = room_service.presence_counts()
+    return operational_controls.render_metrics(
+        room_service.active_room_count(),
+        connected_players=connected,
+        disconnected_retained_players=disconnected_retained,
+    )
 
 
 app.include_router(

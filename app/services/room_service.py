@@ -4,8 +4,8 @@ import hashlib
 import secrets
 import time
 from hmac import compare_digest
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Callable
 
 from fastapi import HTTPException, status
 
@@ -25,12 +25,40 @@ if TYPE_CHECKING:
 
 
 class RoomService:
-    def __init__(self, store: RoomStore, game_service: GameService | None = None) -> None:
+    def __init__(
+        self,
+        store: RoomStore,
+        game_service: GameService | None = None,
+        *,
+        idempotency_ttl_seconds: float = 86400.0,
+        waiting_room_ttl_seconds: float = 900.0,
+        playing_room_ttl_seconds: float = 3600.0,
+        finished_room_ttl_seconds: float = 900.0,
+    ) -> None:
         self._store = store
         self._game_service = game_service
         self._idempotency_records: dict[str, tuple[str, str, str, str, str, float]] = {}
         self._leave_records: dict[str, tuple[str, str, float]] = {}
-        self._idempotency_ttl_seconds = 600.0
+        self._idempotency_ttl_seconds = idempotency_ttl_seconds
+        self._room_ttl_seconds = {
+            RoomStatus.WAITING: waiting_room_ttl_seconds,
+            RoomStatus.STARTING: playing_room_ttl_seconds,
+            RoomStatus.PLAYING: playing_room_ttl_seconds,
+            RoomStatus.FINISHED: finished_room_ttl_seconds,
+        }
+        self._room_deleted_listeners: list[Callable[[str], None]] = []
+        self._room_deletion_observers: list[
+            Callable[[str, str, RoomStatus], None]
+        ] = []
+        self._closed_rooms: dict[str, tuple[str, float]] = {}
+
+    def add_room_deleted_listener(self, listener: Callable[[str], None]) -> None:
+        self._room_deleted_listeners.append(listener)
+
+    def add_room_deletion_observer(
+        self, observer: Callable[[str, str, RoomStatus], None]
+    ) -> None:
+        self._room_deletion_observers.append(observer)
 
     def leave_room_idempotent(
         self, operation_id: str, room_code: str, player_id: str, *, replay_only: bool = False
@@ -40,8 +68,8 @@ class RoomService:
             key: value for key, value in self._leave_records.items()
             if now - value[2] <= self._idempotency_ttl_seconds
         }
-        existing = self._leave_records.get(operation_id)
         normalized = room_code.upper()
+        existing = self._leave_records.get(operation_id)
         if existing is not None:
             if existing[:2] != (normalized, player_id):
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "idempotency_key_reused"})
@@ -111,6 +139,8 @@ class RoomService:
             game=GameState(),
             createdAt=now,
             updatedAt=now,
+            allDisconnectedAt=now,
+            expiresAt=now + timedelta(seconds=self._room_ttl_seconds[RoomStatus.WAITING]),
         )
         self._store.save(room)
         return room, host_player, session_token
@@ -120,6 +150,8 @@ class RoomService:
         if room.status != RoomStatus.WAITING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "room_already_started"})
         if len(room.players) >= room.max_players:
+            self._evict_expired_lobby_player(room)
+        if len(room.players) >= room.max_players:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "room_full"})
         session_token = self._generate_session_token()
         player = Player(
@@ -128,6 +160,7 @@ class RoomService:
         )
         room.players.append(player)
         room.scores[player.player_id] = 0
+        self._refresh_lifecycle(room)
         self._touch(room)
         self._store.save(room)
         return room, player, session_token
@@ -136,7 +169,10 @@ class RoomService:
         normalized_code = self.normalize_room_code(room_code)
         room = self._store.get(normalized_code)
         if room is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "room_not_found"})
+            self._prune_closed_rooms()
+            closed = self._closed_rooms.get(normalized_code)
+            code = closed[0] if closed is not None else "room_not_found"
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": code})
         return room
 
     def leave_room(self, room_code: str, player_id: str) -> Room | None:
@@ -145,6 +181,17 @@ class RoomService:
 
     def active_room_count(self) -> int:
         return len(self._store.list_rooms())
+
+    def presence_counts(self) -> tuple[int, int]:
+        connected = 0
+        disconnected_retained = 0
+        for room in self._store.list_rooms():
+            for player in room.players:
+                if player.is_connected:
+                    connected += 1
+                else:
+                    disconnected_retained += 1
+        return connected, disconnected_retained
 
     def expire_abandoned_rooms(
         self,
@@ -156,16 +203,11 @@ class RoomService:
         for room in self._store.list_rooms():
             if any(player.is_connected for player in room.players):
                 continue
-            if (now - room.updated_at).total_seconds() < ttl_seconds:
+            self._refresh_lifecycle(room)
+            if room.expires_at is None or now < room.expires_at:
                 continue
-            self._store.delete(room.room_code)
+            self._delete_room(room, reason="room_expired")
             expired.append(room.room_code)
-        if expired:
-            self._idempotency_records = {
-                key: record
-                for key, record in self._idempotency_records.items()
-                if record[2] not in expired
-            }
         return expired
 
     def leave_room_with_result(self, room_code: str, player_id: str):
@@ -174,7 +216,7 @@ class RoomService:
         room.players = [existing for existing in room.players if existing.player_id != player.player_id]
         room.scores.pop(player.player_id, None)
         if not room.players:
-            self._store.delete(room.room_code)
+            self._delete_room(room, reason="room_closed")
             return None, None
         if room.host_player_id == player.player_id:
             connected_players = [
@@ -198,11 +240,13 @@ class RoomService:
             player.connection_epoch += 1
             player.disconnected_at = None
             player.voting_excluded = False
+            room.last_connected_at = self._now()
             current_host = self.get_player(room, room.host_player_id)
             if current_host.voting_excluded and not current_host.is_connected:
                 self._assign_host(room, player)
         else:
             player.disconnected_at = self._now()
+        self._refresh_lifecycle(room)
         self._touch(room)
         self._store.save(room)
         return room
@@ -284,11 +328,20 @@ class RoomService:
         self._store.save(room)
         return room
 
+    def remove_expired_lobby_players(self, room: Room) -> Room:
+        while any(
+            not player.is_connected and player.voting_excluded
+            for player in room.players
+        ):
+            self._evict_expired_lobby_player(room)
+        return room
+
     def player_in_room(self, room_code: str, player_id: str) -> bool:
         room = self.get_room(room_code)
         return any(player.player_id == player_id for player in room.players)
 
     def save(self, room: Room) -> Room:
+        self._refresh_lifecycle(room)
         self._touch(room)
         return self._store.save(room)
 
@@ -348,6 +401,10 @@ class RoomService:
             game=game_payload,
             createdAt=room.created_at,
             updatedAt=room.updated_at,
+            lastConnectedAt=room.last_connected_at,
+            allDisconnectedAt=room.all_disconnected_at,
+            expiresAt=room.expires_at,
+            finishedAt=room.finished_at,
         )
 
     def require_host(self, room: Room, player_id: str) -> None:
@@ -361,7 +418,18 @@ class RoomService:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "invalid_player_session"})
 
     def authenticate_player(self, room: Room, player_id: str, session_token: str) -> Player:
-        player = self.get_player(room, player_id)
+        try:
+            player = self.get_player(room, player_id)
+        except HTTPException:
+            removed_hash = room.removed_player_sessions.get(player_id)
+            if removed_hash is not None and compare_digest(
+                removed_hash, self._hash_session_token(session_token)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail={"code": "player_removed"},
+                )
+            raise
         if not compare_digest(
             player.session_token_hash,
             self._hash_session_token(session_token),
@@ -374,6 +442,14 @@ class RoomService:
         for player in room.players:
             if compare_digest(player.session_token_hash, token_hash):
                 return player
+        if any(
+            compare_digest(removed_hash, token_hash)
+            for removed_hash in room.removed_player_sessions.values()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail={"code": "player_removed"},
+            )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": "invalid_player_session"})
 
     @staticmethod
@@ -424,6 +500,71 @@ class RoomService:
         pending_round.votes = [
             vote for vote in pending_round.votes if vote.player_id != player_id
         ]
+
+    def _delete_room(self, room: Room, *, reason: str) -> None:
+        room_code = room.room_code
+        self._store.delete(room_code)
+        self._closed_rooms[room_code] = (reason, time.monotonic())
+        self._idempotency_records = {
+            key: record
+            for key, record in self._idempotency_records.items()
+            if record[2] != room_code
+        }
+        for listener in tuple(self._room_deleted_listeners):
+            listener(room_code)
+        for observer in tuple(self._room_deletion_observers):
+            observer(room_code, reason, room.status)
+
+    def _evict_expired_lobby_player(self, room: Room) -> None:
+        if room.status != RoomStatus.WAITING:
+            return
+        candidate = next(
+            (
+                player
+                for player in room.players
+                if not player.is_connected and player.voting_excluded
+            ),
+            None,
+        )
+        if candidate is None:
+            return
+        room.removed_player_sessions[candidate.player_id] = candidate.session_token_hash
+        room.players = [
+            player for player in room.players if player.player_id != candidate.player_id
+        ]
+        room.scores.pop(candidate.player_id, None)
+        if room.host_player_id == candidate.player_id and room.players:
+            connected = [player for player in room.players if player.is_connected]
+            self._assign_host(room, (connected or room.players)[0])
+        room.current_turn_player_id = self._resolve_current_turn(room)
+        self._refresh_lifecycle(room)
+        self._touch(room)
+        self._store.save(room)
+
+    def _refresh_lifecycle(self, room: Room) -> None:
+        now = self._now()
+        if room.status == RoomStatus.FINISHED:
+            if room.finished_at is None:
+                room.finished_at = now
+        else:
+            room.finished_at = None
+        if any(player.is_connected for player in room.players):
+            room.all_disconnected_at = None
+            room.expires_at = None
+            return
+        if room.all_disconnected_at is None:
+            room.all_disconnected_at = now
+        room.expires_at = room.all_disconnected_at + timedelta(
+            seconds=self._room_ttl_seconds[room.status]
+        )
+
+    def _prune_closed_rooms(self) -> None:
+        now = time.monotonic()
+        self._closed_rooms = {
+            room_code: record
+            for room_code, record in self._closed_rooms.items()
+            if now - record[1] <= self._idempotency_ttl_seconds
+        }
 
     @staticmethod
     def _touch(room: Room) -> None:

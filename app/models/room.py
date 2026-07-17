@@ -25,6 +25,7 @@ class Room(BaseModel):
     host_epoch: int = Field(default=0, ge=0, alias="hostEpoch")
     version: int = Field(default=0, ge=0)
     processed_command_ids: list[str] = Field(default_factory=list, exclude=True)
+    removed_player_sessions: dict[str, str] = Field(default_factory=dict, exclude=True)
     players: list[Player] = Field(default_factory=list)
     status: RoomStatus = RoomStatus.WAITING
     max_players: int = Field(ge=2, le=8, strict=True, alias="maxPlayers")
@@ -43,6 +44,10 @@ class Room(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         alias="updatedAt",
     )
+    last_connected_at: datetime | None = Field(default=None, alias="lastConnectedAt")
+    all_disconnected_at: datetime | None = Field(default=None, alias="allDisconnectedAt")
+    expires_at: datetime | None = Field(default=None, alias="expiresAt")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
 
 
 class CreateRoomRequest(BaseModel):

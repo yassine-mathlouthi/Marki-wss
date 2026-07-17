@@ -30,7 +30,14 @@ class Settings:
         self.ws_event_rate_limit = max(1, int(os.getenv("WS_EVENT_RATE_LIMIT", "30")))
         self.ws_event_rate_window_seconds = max(1.0, float(os.getenv("WS_EVENT_RATE_WINDOW_SECONDS", "10")))
         self.abandoned_room_ttl_seconds = max(1.0, float(os.getenv("ABANDONED_ROOM_TTL_SECONDS", "1800")))
+        self.waiting_room_ttl_seconds = max(1.0, float(os.getenv("WAITING_ROOM_TTL_SECONDS", "900")))
+        self.playing_room_ttl_seconds = max(1.0, float(os.getenv("PLAYING_ROOM_TTL_SECONDS", "3600")))
+        self.finished_room_ttl_seconds = max(1.0, float(os.getenv("FINISHED_ROOM_TTL_SECONDS", "900")))
         self.room_cleanup_interval_seconds = max(1.0, float(os.getenv("ROOM_CLEANUP_INTERVAL_SECONDS", "30")))
+        self.idempotency_ttl_seconds = max(
+            600.0,
+            float(os.getenv("IDEMPOTENCY_TTL_SECONDS", "86400")),
+        )
         self.cors_allow_origins = [
             origin.strip() for origin in allowed_origins.split(",") if origin.strip()
         ] or ["*"]

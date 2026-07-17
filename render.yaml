@@ -10,3 +10,11 @@ services:
         value: 180
       - key: CARDS_CACHE_TTL_SECONDS
         value: 300
+      - key: IDEMPOTENCY_TTL_SECONDS
+        value: 86400
+      - key: WAITING_ROOM_TTL_SECONDS
+        value: 900
+      - key: PLAYING_ROOM_TTL_SECONDS
+        value: 3600
+      - key: FINISHED_ROOM_TTL_SECONDS
+        value: 900

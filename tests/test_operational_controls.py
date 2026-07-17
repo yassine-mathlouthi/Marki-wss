@@ -54,6 +54,23 @@ class OperationalControlsTest(unittest.TestCase):
         self.controls.release_socket("ROOM02", "p1", 1)
         self.controls.admit_socket("client", "ROOM03", "p2", 2)
 
+    def test_final_player_leave_releases_owned_room_capacity(self) -> None:
+        store = InMemoryRoomStore()
+        service = RoomService(store)
+        service.add_room_deleted_listener(self.controls.remove_room)
+
+        for index in range(6):
+            room, host, _ = service.create_room("Host", 4, LobbySettings())
+            self.controls.check_room_capacity("client")
+            self.controls.register_room("client", room.room_code)
+            service.leave_room(room.room_code, host.player_id)
+            self.controls.check_room_capacity("client")
+            self.assertEqual(service.active_room_count(), 0, index)
+
+    def test_joined_rooms_do_not_consume_created_room_capacity(self) -> None:
+        self.controls.register_room("owner", "ROOM01")
+        self.controls.check_room_capacity("guest")
+
     def test_reconnect_replaces_principal_without_consuming_another_socket(self) -> None:
         self.assertFalse(
             self.controls.admit_socket("client", "ROOM01", "p1", 1)
@@ -71,8 +88,10 @@ class OperationalControlsTest(unittest.TestCase):
         active_room, active_player, _ = service.create_room(
             "Active", 4, LobbySettings()
         )
-        old_room.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
-        active_room.updated_at = old_room.updated_at
+        old_room.all_disconnected_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        old_room.expires_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+        active_room.all_disconnected_at = old_room.all_disconnected_at
+        active_room.expires_at = old_room.expires_at
         active_player.is_connected = True
 
         expired = service.expire_abandoned_rooms(
@@ -81,6 +100,56 @@ class OperationalControlsTest(unittest.TestCase):
 
         self.assertEqual(expired, [old_room.room_code])
         self.assertEqual(service.active_room_count(), 1)
+
+    def test_room_expiry_uses_phase_specific_lifecycle_deadline(self) -> None:
+        store = InMemoryRoomStore()
+        service = RoomService(
+            store,
+            waiting_room_ttl_seconds=60,
+            playing_room_ttl_seconds=600,
+            finished_room_ttl_seconds=30,
+        )
+        room, host, _ = service.create_room("Host", 4, LobbySettings())
+        disconnected_at = room.all_disconnected_at
+
+        self.assertIsNotNone(disconnected_at)
+        self.assertEqual(
+            room.expires_at,
+            disconnected_at + timedelta(seconds=60),
+        )
+
+        service.mark_connected(room.room_code, host.player_id, True)
+        self.assertIsNone(room.all_disconnected_at)
+        self.assertIsNone(room.expires_at)
+
+        service.mark_connected(room.room_code, host.player_id, False)
+        self.assertIsNotNone(room.all_disconnected_at)
+        self.assertEqual(
+            room.expires_at,
+            room.all_disconnected_at + timedelta(seconds=60),
+        )
+
+    def test_full_lobby_evicts_expired_disconnected_player(self) -> None:
+        store = InMemoryRoomStore()
+        service = RoomService(store)
+        room, host, _ = service.create_room("Host", 2, LobbySettings())
+        room, guest, guest_token = service.join_room(room.room_code, "Guest")
+        service.mark_connected(room.room_code, host.player_id, True)
+        service.mark_connected(room.room_code, guest.player_id, True)
+        room = service.mark_connected(room.room_code, guest.player_id, False)
+        service.expire_disconnected_player(
+            room.room_code,
+            guest.player_id,
+            guest.connection_epoch,
+        )
+
+        room, replacement, _ = service.join_room(room.room_code, "Replacement")
+
+        self.assertNotEqual(replacement.player_id, guest.player_id)
+        with self.assertRaises(HTTPException) as raised:
+            service.authenticate_player(room, guest.player_id, guest_token)
+        self.assertEqual(raised.exception.status_code, 410)
+        self.assertEqual(raised.exception.detail, {"code": "player_removed"})
 
     def test_metrics_have_bounded_non_sensitive_labels(self) -> None:
         self.controls.increment("socket_errors", "invalid_json")

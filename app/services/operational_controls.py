@@ -54,6 +54,19 @@ class OperationalControls:
         for principal in [key for key in self._sockets if key[0] == room_code]:
             self._sockets.pop(principal, None)
 
+    def prune_stale_rooms(self, active_room_codes: set[str]) -> int:
+        stale_room_codes = {
+            room_code
+            for rooms in self._rooms_by_ip.values()
+            for room_code in rooms
+            if room_code not in active_room_codes
+        }
+        for room_code in stale_room_codes:
+            self.remove_room(room_code)
+        if stale_room_codes:
+            self.add("stale_room_accounting", "pruned", len(stale_room_codes))
+        return len(stale_room_codes)
+
     def prune_expired_buckets(self) -> None:
         now = self._clock()
         for key, bucket in list(self._events.items()):
@@ -111,9 +124,17 @@ class OperationalControls:
     def active_socket_count(self) -> int:
         return len(self._sockets)
 
-    def render_metrics(self, active_rooms: int) -> str:
+    def render_metrics(
+        self,
+        active_rooms: int,
+        *,
+        connected_players: int = 0,
+        disconnected_retained_players: int = 0,
+    ) -> str:
         lines = [
             f"marki_rooms_active {active_rooms}",
+            f"marki_players_connected {connected_players}",
+            f"marki_players_disconnected_retained {disconnected_retained_players}",
             f"marki_websocket_connections_active {self.active_socket_count}",
         ]
         for (metric, category), value in sorted(self._counters.items()):

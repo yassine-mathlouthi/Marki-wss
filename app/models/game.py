@@ -157,4 +157,8 @@ class RoomSnapshot(BaseModel):
     game: dict[str, Any] | None = None
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
+    last_connected_at: datetime | None = Field(default=None, alias="lastConnectedAt")
+    all_disconnected_at: datetime | None = Field(default=None, alias="allDisconnectedAt")
+    expires_at: datetime | None = Field(default=None, alias="expiresAt")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
 

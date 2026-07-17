@@ -73,10 +73,18 @@ def get_websocket_router(
     def room_lock(room_code: str) -> asyncio.Lock:
         return room_locks.setdefault(room_code, asyncio.Lock())
 
+    def remove_deleted_room(room_code: str) -> None:
+        room_locks.pop(room_code, None)
+        for key in [key for key in grace_tasks if key[0] == room_code]:
+            task = grace_tasks.pop(key)
+            task.cancel()
+
     def cleanup_deleted_rooms(active_room_codes: set[str]) -> None:
         for room_code in list(room_locks):
             if room_code not in active_room_codes:
-                room_locks.pop(room_code, None)
+                remove_deleted_room(room_code)
+
+    room_service.add_room_deleted_listener(remove_deleted_room)
 
     def cancel_grace(room_code: str, player_id: str) -> None:
         task = grace_tasks.pop((room_code, player_id), None)
@@ -169,7 +177,7 @@ def get_websocket_router(
             auth_message = json.loads(raw_auth)
             if not isinstance(auth_message, dict) or auth_message.get("type") != "authenticate":
                 raise ValueError
-            room_service.authenticate_player(
+            authenticated_player = room_service.authenticate_player(
                 room,
                 player_id,
                 str(auth_message.get("sessionToken", "")),
@@ -177,6 +185,16 @@ def get_websocket_router(
         except (asyncio.TimeoutError, HTTPException, ValueError, WebSocketDisconnect):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid room or player session.")
             return
+
+        if (
+            operational_controls is not None
+            and not authenticated_player.is_connected
+            and authenticated_player.disconnected_at is not None
+        ):
+            operational_controls.increment(
+                "reconnect_grace",
+                "after" if authenticated_player.voting_excluded else "before",
+            )
 
         registered = False
         admitted_socket = False
@@ -275,6 +293,8 @@ def get_websocket_router(
                     continue
 
                 event_type = raw_message.get("type")
+                if event_type == "leave_room" and operational_controls is not None:
+                    operational_controls.increment("leave", "requested")
                 payload = raw_message.get("payload", {})
                 if not isinstance(payload, dict):
                     await _send_error(websocket, room.room_code, player_id, "Event payload must be an object.", code="invalid_payload", correlation_id=correlation_id)
@@ -328,6 +348,10 @@ def get_websocket_router(
                             replayed=not executed,
                         )
                         if event_type == "leave_room":
+                            if operational_controls is not None:
+                                operational_controls.increment(
+                                    "leave", "applied" if executed else "replayed"
+                                )
                             connection_manager.disconnect(room.room_code, player_id, websocket)
                             await websocket.close(code=status.WS_1000_NORMAL_CLOSURE, reason="Left room.")
                             return
@@ -362,6 +386,11 @@ def get_websocket_router(
                         str(locals().get("event_type", "")), "invalid_payload",
                     )
                 except HTTPException as exc:
+                    if (
+                        locals().get("event_type") == "leave_room"
+                        and operational_controls is not None
+                    ):
+                        operational_controls.increment("leave", "failed")
                     code = exc.detail.get("code") if isinstance(exc.detail, dict) else "command_rejected"
                     logger.info("WebSocket command rejected room=%s player=%s correlation=%s code=%s", room.room_code, player_id, correlation_id, code)
                     if operational_controls is not None:
@@ -474,10 +503,11 @@ async def _handle_event(
         room_service.require_host(room, player_id)
         if room.status != RoomStatus.WAITING:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Game already started.")
+        room = room_service.remove_expired_lobby_players(room)
         if len(room.players) < 2:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="At least two players are required.")
-        if any(not player.is_ready for player in room.players):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="All players must be ready.")
+        if any(not player.is_connected or not player.is_ready for player in room.players):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="All active players must be connected and ready.")
         room.status = RoomStatus.STARTING
         room = room_service.save(room)
         await _broadcast_snapshot(
